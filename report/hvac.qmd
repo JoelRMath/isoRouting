@@ -32,6 +32,30 @@ nocite: |
 # 1. Data Ingestion and Exploration
 
 ```{r}
+#| label: data-ingestion
+#| warning: false
+#| message: false
+#| echo: false
+
+library(tidyverse)
+library(lubridate)
+library(here)
+library(janitor)
+
+# 1. Read and clean the data
+hvac_data <- read_csv(here("data", "Turin", "HVAC_NE_EC_19-21.csv")) %>%
+  clean_names()
+
+# 2. Clean the timestamp and extract a subset
+hvac_clean <- hvac_data %>%
+  mutate(
+    timestamp = ymd_hms(timestamp) 
+  )
+glimpse(hvac_clean)
+```
+
+
+```{r}
 #| label: fig-data-exploration-all
 #| warning: false
 #| message: false
@@ -348,6 +372,532 @@ ggplot(spectra_data, aes(x = Frequency_cpd, y = Power, color = Variable)) +
   )
 ```
 
+```{r}
+#| label: fig-global-distributions
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 10
+#| fig-height: 12
+#| fig-cap: "Global density distributions of HVAC telemetry (Low bandwidth KDE)"
+
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# 1. Pivot all numeric variables for faceting (using the full 34k dataset)
+hvac_dist_data <- hvac_clean %>%
+  select(-timestamp) %>%
+  pivot_longer(
+    cols = everything(), 
+    names_to = "Variable", 
+    values_to = "Value"
+  )
+
+# 2. Plot using a lowered bandwidth adjustment to capture sharp multimodal peaks
+ggplot(hvac_dist_data, aes(x = Value, fill = Variable, color = Variable)) +
+  # adjust = 0.5 halves the default bandwidth to reveal finer structural details
+  geom_density(alpha = 0.4, adjust = 1) + 
+  facet_wrap(~Variable, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(
+    title = "Global Variable Distributions (Full Turin Dataset)",
+    subtitle = "Kernel density estimates mapping the distinct operational states of the HVAC system",
+    x = "Measurement Value",
+    y = "Density"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 10)
+  )
+```
+
+`power`: drop
+
+`time_stamp`
+
+`is_weekend` (from time_stamp)
+
+`energy` (Raw State)
+
+`energy_lag_24h` (Schedule context)
+
+`energy_deriv_15m` (State transition context)
+
+`rh_outdoor` (Raw context)
+
+`rh_outdoor_lag_24h` (Weather shifts)
+
+`delta_rh` =  `rh_return` - `rh_supply` (The active moisture control work)
+
+`delta_rh_deriv_15m` (Sudden state changes in moisture control)
+
+`t_outdoor` (Raw weather)
+
+`t_outdoor_lag_24h` (Weather shift)
+
+`t_saturation` (Raw state)
+
+`t_saturation_deriv_15m` (Sudden humidifier faults)
+
+`delta_t` = `t_return` - `t_supply` (The active heating work): 
+
+`delta_t_deriv_15m` (Sudden loss or surge of heating power)
+
+`temp_error` (How far off target the building is) $t\_return - sp\_return$
+
+`sp_return`
+
+```{r}
+#| label: feature-engineering-pipeline
+#| warning: false
+#| message: false
+#| echo: true
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(slider) 
+
+hvac_features <- hvac_clean %>%
+  # 0. Catch any stray NAs in the timestamp column before sequencing
+  filter(!is.na(timestamp)) %>%
+  # 1. Ensure the data is perfectly continuous in 15-minute increments
+  complete(
+    timestamp = seq(
+      min(timestamp, na.rm = TRUE), 
+      max(timestamp, na.rm = TRUE), 
+      by = "15 mins"
+    )
+  ) %>%
+  arrange(timestamp) %>%
+  mutate(
+    # 2. Context & Control
+    is_weekend = if_else(wday(timestamp, week_start = 1) %in% c(6, 7), 1, 0),
+    temp_error = t_return - sp_return,
+    
+    # 3. Common-Mode Rejection (Physics)
+    delta_t = t_return - t_supply,
+    delta_rh = rh_return - rh_supply
+  ) %>%
+  mutate(
+    # 4. Cyclical Lags
+    t_outdoor_lag_24h = t_outdoor - lag(t_outdoor, n = 96),
+    rh_outdoor_lag_24h = rh_outdoor - lag(rh_outdoor, n = 96),
+    energy_lag_24h = energy - lag(energy, n = 96),
+    
+    # 5. Instantaneous Derivatives
+    energy_deriv_15m = energy - lag(energy, n = 1),
+    delta_t_deriv_15m = delta_t - lag(delta_t, n = 1),
+    delta_rh_deriv_15m = delta_rh - lag(delta_rh, n = 1),
+    t_return_deriv_15m = t_return - lag(t_return, n = 1),
+    t_saturation_deriv_15m = t_saturation - lag(t_saturation, n = 1),
+    
+    # 6. Volatility 
+    t_supply_roll_sd_1h = slider::slide_dbl(t_supply, sd, .before = 3, .complete = TRUE)
+  ) %>%
+  # 7. Purge all artifacts (including the summer gap NAs)
+  drop_na()
+
+glimpse(hvac_features)
+```
+
+
+```{r}
+#| label: fit-isolation-forest
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 10
+#| fig-height: 5
+#| fig-cap: "Isolation Forest Anomaly Scores over Time"
+
+library(isotree)
+library(ggplot2)
+library(dplyr)
+
+# 1. Isolate the feature matrix (dropping the timestamp)
+train_data <- hvac_features %>%
+  select(-timestamp)
+
+# 2. Fit the Isolation Forest
+# ntrees = 500 ensures variance stabilization
+# sample_size = 256 prevents anomaly masking
+set.seed(42) 
+iso_model <- isolation.forest(
+  train_data,
+  ntrees = 500,
+  sample_size = 256,
+  missing_action = "fail" # Our drop_na() ensures a clean matrix
+)
+
+# 3. Score the dataset
+# predict() drops the data down the fitted forest and returns the bounded score [0, 1]
+hvac_scored <- hvac_features %>%
+  mutate(anomaly_score = predict(iso_model, train_data))
+
+# 4. Visualize the temporal anomaly profile
+ggplot(hvac_scored, aes(x = timestamp, y = anomaly_score)) +
+  geom_line(color = "slategray", alpha = 0.8) +
+  # Visual threshold for investigation (scores > 0.6 are generally considered anomalous)
+  geom_hline(yintercept = 0.6, linetype = "dashed", color = "darkred", linewidth = 1) +
+  theme_minimal() +
+  labs(
+    title = "HVAC System Dynamic Anomaly Profile",
+    subtitle = "Scores approaching 1.0 indicate severe structural breaks in mechanical behavior",
+    x = "Time",
+    y = "Anomaly Score (s)"
+  ) +
+  theme(
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+```{r}
+#| label: qc-seed-stability
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 6
+#| fig-height: 6
+#| fig-cap: "Stability Check: Anomaly Scores across Random Seeds"
+
+library(ggplot2)
+library(dplyr)
+
+# 1. Fit Model A 
+iso_model_A <- isolation.forest(
+  train_data,
+  ntrees = 500,
+  sample_size = 256,
+  missing_action = "fail",
+  seed = 42
+)
+
+# 2. Fit Model B 
+iso_model_B <- isolation.forest(
+  train_data,
+  ntrees = 500,
+  sample_size = 256,
+  missing_action = "fail",
+  seed = 123
+)
+
+# 3. Score and Combine
+qc_data <- tibble(
+  score_A = predict(iso_model_A, train_data),
+  score_B = predict(iso_model_B, train_data)
+)
+
+# 4. Calculate Convergence Metric
+stability_cor <- cor(qc_data$score_A, qc_data$score_B)
+
+# 5. Visualize the Variance
+ggplot(qc_data, aes(x = score_A, y = score_B)) +
+  geom_point(alpha = 0.3, size = 0.5, color = "darkblue") +
+  # Reference line for perfect agreement
+  geom_abline(intercept = 0, slope = 1, color = "darkred", linetype = "dashed", linewidth = 1) +
+  theme_minimal() +
+  labs(
+    title = "Isolation Forest Convergence Check",
+    subtitle = sprintf("Pearson Correlation (Seed 42 vs Seed 123): %.4f", stability_cor),
+    x = "Anomaly Score (Seed 42)",
+    y = "Anomaly Score (Seed 123)"
+  ) +
+  theme(
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+
+```{r}
+#| label: extract-top-anomalies
+#| warning: false
+#| message: false
+#| echo: false
+
+# Extract and rank the most severe anomalies
+top_anomalies <- hvac_scored %>%
+  filter(anomaly_score > 0.6) %>%
+  arrange(desc(anomaly_score)) %>%
+  # Select the contextual variables to see the physical breakdown
+  select(
+    timestamp, anomaly_score, 
+    is_weekend, sp_return, temp_error, 
+    energy_deriv_15m, delta_t, delta_t_deriv_15m
+  )
+
+# Display the top 5 worst mechanical events
+head(top_anomalies, 5)
+```
+
+```{r}
+#| label: calculate-p-values
+#| warning: false
+#| message: false
+#| echo: false
+
+# 1. Fit the empirical distribution to the scores
+score_ecdf <- ecdf(hvac_scored$anomaly_score)
+
+# 2. Calculate percentiles and p-values
+hvac_scored <- hvac_scored %>%
+  mutate(
+    percentile = score_ecdf(anomaly_score),
+    # p-value: the probability of seeing a score this high or higher
+    p_value = 1 - percentile 
+  )
+
+# 3. View the top anomalies with their new statistical context
+top_anomalies_stat <- hvac_scored %>%
+  filter(anomaly_score > 0.6) %>%
+  arrange(desc(anomaly_score)) %>%
+  select(
+    timestamp, anomaly_score, p_value,
+    is_weekend, sp_return, temp_error, delta_t
+  )
+
+# Display the top 5
+head(top_anomalies_stat, 5)
+```
+
+```{r}
+#| label: score-density-plot
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 8
+#| fig-height: 4
+#| fig-cap: "Density Distribution of Isolation Forest Scores"
+
+ggplot(hvac_scored, aes(x = anomaly_score)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 100, fill = "slategray", alpha = 0.5) +
+  geom_density(color = "darkblue", linewidth = 1) +
+  geom_vline(xintercept = 0.6, linetype = "dashed", color = "darkred", linewidth = 1) +
+  theme_minimal() +
+  labs(
+    title = "Empirical Density of Anomaly Scores",
+    subtitle = "Notice the heavy concentration of normal states and the long, sparse tail",
+    x = "Anomaly Score (s)",
+    y = "Density"
+  )
+```
+
+```{r}
+#| label: beta-mle-fit
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 8
+#| fig-height: 4
+#| fig-cap: "Empirical Density vs MLE Beta Distribution"
+
+library(MASS)
+library(ggplot2)
+
+# 1. Calculate Method of Moments (MoM) to use as starting values for MLE
+scores <- hvac_scored$anomaly_score
+mu <- mean(scores)
+var_x <- var(scores)
+
+alpha_mom <- mu * ((mu * (1 - mu) / var_x) - 1)
+beta_mom <- (1 - mu) * ((mu * (1 - mu) / var_x) - 1)
+
+# 2. Fit the Beta distribution using Maximum Likelihood Estimation
+beta_mle <- fitdistr(
+  scores, 
+  densfun = "beta", 
+  start = list(shape1 = alpha_mom, shape2 = beta_mom)
+)
+
+alpha_est <- beta_mle$estimate["shape1"]
+beta_est <- beta_mle$estimate["shape2"]
+
+cat(sprintf("MLE Estimates:\nAlpha: %.4f\nBeta: %.4f\n\n", alpha_est, beta_est))
+
+# 3. Superimpose the theoretical Beta curve on the empirical data
+ggplot(hvac_scored, aes(x = anomaly_score)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 100, fill = "slategray", alpha = 0.5) +
+  # Empirical Density (Dark Blue)
+  geom_density(color = "darkblue", linewidth = 1) +
+  # Theoretical Beta Density (Bright Red Dashed)
+  stat_function(
+    fun = dbeta, 
+    args = list(shape1 = alpha_est, shape2 = beta_est), 
+    color = "red", 
+    linetype = "dashed", 
+    linewidth = 1
+  ) +
+  geom_vline(xintercept = 0.6, linetype = "dashed", color = "darkred", linewidth = 1) +
+  theme_minimal() +
+  labs(
+    title = "Model Fit: Empirical Density vs MLE Beta Distribution",
+    subtitle = "Red Dashed = Theoretical Beta Fit | Dark Blue = Empirical Data",
+    x = "Anomaly Score (s)",
+    y = "Density"
+  )
+```
+
+```{r}
+#| label: fault-signature-clustering
+#| warning: false
+#| message: false
+#| echo: false
+
+# 1. Isolate the severe structural breaks
+severe_anomalies <- hvac_scored %>%
+  filter(anomaly_score > 0.6)
+
+# 2. Select ONLY the physical/engineered features for clustering
+# Explicitly using dplyr::select to prevent MASS collision
+cluster_data <- severe_anomalies %>%
+  dplyr::select(
+    temp_error, delta_t, delta_rh,
+    energy_deriv_15m, delta_t_deriv_15m,
+    t_supply_roll_sd_1h
+  )
+
+# 3. Scale the data (Critical: Energy in kWh must not dominate Temp in Celsius)
+cluster_scaled <- scale(cluster_data)
+
+# 4. Compute Euclidean distance and build the hierarchical tree
+dist_matrix <- dist(cluster_scaled, method = "euclidean")
+hc_model <- hclust(dist_matrix, method = "ward.D2")
+
+# 5. Cut the tree into 3 distinct fault signatures
+severe_anomalies <- severe_anomalies %>%
+  mutate(fault_signature = as.factor(cutree(hc_model, k = 3)))
+
+# 6. Summarize the mechanical profile of each fault signature
+fault_profiles <- severe_anomalies %>%
+  group_by(fault_signature) %>%
+  summarize(
+    event_count = n(),
+    avg_temp_error = mean(temp_error, na.rm = TRUE),
+    avg_delta_t = mean(delta_t, na.rm = TRUE),
+    avg_energy_surge = mean(energy_deriv_15m, na.rm = TRUE),
+    avg_volatility = mean(t_supply_roll_sd_1h, na.rm = TRUE)
+  )
+
+# Display the diagnostic profiles
+print(fault_profiles)
+```
+
+```{r}
+#| label: fault-signature-divisive
+#| warning: false
+#| message: false
+#| echo: true
+
+# install.packages("cluster") # Run in console if needed
+library(cluster)
+
+# 1. Run Divisive Analysis (Top-Down)
+diana_model <- diana(cluster_scaled, metric = "euclidean")
+
+# 2. Cut the divisive tree into 3 distinct fault signatures
+severe_anomalies <- severe_anomalies %>%
+  mutate(fault_signature_diana = as.factor(cutree(as.hclust(diana_model), k = 3)))
+
+# 3. Summarize the mechanical profile of the new DIANA signatures
+fault_profiles_diana <- severe_anomalies %>%
+  group_by(fault_signature_diana) %>%
+  summarize(
+    event_count = n(),
+    avg_temp_error = mean(temp_error, na.rm = TRUE),
+    avg_delta_t = mean(delta_t, na.rm = TRUE),
+    avg_energy_surge = mean(energy_deriv_15m, na.rm = TRUE),
+    avg_volatility = mean(t_supply_roll_sd_1h, na.rm = TRUE)
+  )
+
+# Compare this output to the Ward's method table
+print(fault_profiles_diana)
+```
+
+```{r}
+#| label: explore-k-clusters
+#| warning: false
+#| message: false
+#| echo: true
+
+library(purrr)
+
+# Define a function to cut the DIANA tree and summarize the physics for any given k
+get_profiles_for_k <- function(k_val) {
+  severe_anomalies %>%
+    mutate(cluster = as.factor(cutree(as.hclust(diana_model), k = k_val))) %>%
+    group_by(cluster) %>%
+    summarize(
+      k = k_val,
+      n_events = n(),
+      temp_err = round(mean(temp_error, na.rm = TRUE), 2),
+      delta_t = round(mean(delta_t, na.rm = TRUE), 2),
+      energy_surge = round(mean(energy_deriv_15m, na.rm = TRUE), 2),
+      volatility = round(mean(t_supply_roll_sd_1h, na.rm = TRUE), 2)
+    ) %>%
+    ungroup()
+}
+
+# Map over k = 2 through 5 and bind the results into one table
+k_exploration <- map_dfr(2:5, get_profiles_for_k)
+
+# Print the entire evolution table
+print(k_exploration, n = 20)
+```
+
+```{r}
+#| label: qc-expanded-clustering
+#| warning: false
+#| message: false
+#| echo: true
+
+library(purrr)
+library(cluster)
+library(dplyr)
+
+# 1. Expand the anomaly pool (lowering threshold from 0.60 to 0.55)
+expanded_anomalies <- hvac_scored %>%
+  filter(anomaly_score > 0.55)
+
+cat(sprintf("Expanded anomaly count: %d events\n\n", nrow(expanded_anomalies)))
+
+# 2. Extract and scale the physics features
+cluster_data_exp <- expanded_anomalies %>%
+  dplyr::select(
+    temp_error, delta_t, delta_rh,
+    energy_deriv_15m, delta_t_deriv_15m,
+    t_supply_roll_sd_1h
+  )
+
+cluster_scaled_exp <- scale(cluster_data_exp)
+
+# 3. Run Divisive Analysis on the larger dataset
+diana_exp <- diana(cluster_scaled_exp, metric = "euclidean")
+
+# 4. Function to cut the tree and summarize
+get_expanded_profiles <- function(k_val) {
+  expanded_anomalies %>%
+    mutate(cluster = as.factor(cutree(as.hclust(diana_exp), k = k_val))) %>%
+    group_by(cluster) %>%
+    summarize(
+      k = k_val,
+      n_events = n(),
+      temp_err = round(mean(temp_error, na.rm = TRUE), 2),
+      delta_t = round(mean(delta_t, na.rm = TRUE), 2),
+      energy_surge = round(mean(energy_deriv_15m, na.rm = TRUE), 2),
+      volatility = round(mean(t_supply_roll_sd_1h, na.rm = TRUE), 2)
+    ) %>%
+    ungroup()
+}
+
+# 5. Map over k = 3 and 4 to check for structural changes
+qc_exploration <- map_dfr(3:4, get_expanded_profiles)
+
+print(qc_exploration, n = 10)
+```
+
 <style>
 .floating-signature {
   position: fixed;
@@ -372,3 +922,5 @@ knitr::knit_exit()
 ```
 
 Borda, Davide (2022), “Development of Anomaly Detectors for HVAC Systems using Machine Learning”, Mendeley Data, V1, doi: 10.17632/mjhr46dkj6.1
+
+dd ref# 09256080
