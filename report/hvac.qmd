@@ -1,0 +1,374 @@
+---
+title: "Prescriptive Analytics in Property Management: An Example with HVAC Telemetry"
+author: "Joël R. Pradines, Ph.D."
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    theme: cosmo
+    math: true
+    embed-resources: true
+    highlight-style: tango
+    link-external-newwindow: true
+    include-after-body: 
+      text: |
+        <script>
+          // Force all external URLs to open in a new tab for local file viewing
+          document.querySelectorAll('a[href^="http"]').forEach(function(link) {
+            link.setAttribute("target", "_blank");
+          });
+        </script>
+bibliography: references.bib
+nocite: |
+  @*
+---
+
+<style>
+  h4 { font-weight: bold !important; }
+</style>
+
+# 1. Data Ingestion and Exploration
+
+```{r}
+#| label: fig-data-exploration-all
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 10
+#| fig-height: 12
+#| fig-cap: "1-Week Time Course of All System Variables"
+
+# Load core packages
+library(tidyverse)
+library(lubridate)
+library(here)
+library(janitor)
+
+# 1. Read and clean the data
+hvac_data <- read_csv(here("data", "Turin", "HVAC_NE_EC_19-21.csv")) %>%
+  clean_names()
+
+# 2. Clean the timestamp and extract a subset
+hvac_clean <- hvac_data %>%
+  mutate(
+    timestamp = ymd_hms(timestamp) 
+  )
+
+# Extract the first week of November
+hvac_week <- hvac_clean %>%
+  filter(
+    timestamp >= ymd("2019-11-01", tz = "UTC"), 
+    timestamp < ymd("2019-11-08", tz = "UTC")
+  )
+
+# 3. Plot all 10 variables
+hvac_plot_all <- hvac_week %>%
+  pivot_longer(
+    cols = -timestamp, 
+    names_to = "Variable", 
+    values_to = "Value"
+  )
+
+ggplot(hvac_plot_all, aes(x = timestamp, y = Value, color = Variable)) +
+  geom_line(alpha = 0.8) +
+  facet_wrap(~Variable, scales = "free_y", ncol = 1) +
+  theme_minimal() +
+  labs(
+    title = "Comprehensive 1-Week HVAC Telemetry",
+    subtitle = "Turin Dataset: Nov 1 - Nov 7, 2019",
+    x = "Time", 
+    y = "Measurement"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold")
+  )
+```
+
+- `power`: The power required by the fans [kW]. This is the instantaneous electrical demand. It shows a "block" pattern, representing the fan motors turning on, running at a steady state, and shutting off.
+- `energy`: The energy required by the fans [kWh]. Power is the instantaneous rate, energy is the accumulated electricity consumed. The jagged, sawtooth pattern on top of the blocks is characteristic of accumulation over a 15-minute intervals.
+- `rh_outdoor` (Outdoor Relative Humidity): The relative humidity of the outside air [%]. It dips during the warmest part of the day and peaks at night when the air cools.
+- `rh_return` (Return Relative Humidity): The relative humidity of the return air [%]. Heating a volume of air lowers its relative humidity:  every time the system turns on to heat the space (`power`, `energy`), this indoor humidity drops.
+- `rh_supply` (Supply Relative Humidity): The relative humidity of the supply air [%]. It tends to mirrors the return humidity but is physically altered by the heating coils.
+- `sp_return (Setpoint Return)`: Tthe temperature setpoint of the return air [°C]. It represents the target temperature for the rooms.
+- `t_outdoor (Outdoor Temperature)`: The ambient temperature outside [°C]. Natural diurnal (day/night) weather cycles.
+- `t_return` (Return Temperature): The temperature of the air pulled back from the rooms into the HVAC unit [°C]: proxy for the actual room temperature.
+- `t_saturation` (Saturation Temperature): The saturation temperature in the humidifier [°C]. Relates to the dew point the system maintains to prevent the air from becoming too dry when heated.
+- `t_supply` (Supply Temperature): The temperature of the conditioned air being pushed into the rooms [°C]. To change the room temperature (t_return) to the target (sp_return), the system has to blast much warmer/colder air.
+
+```{r}
+#| label: fig-correlation
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Global Pearson correlation heatmap (Full Turin Dataset)"
+
+library(ggcorrplot)
+
+# Calculate correlation matrix on all numeric columns except timestamp
+cor_matrix <- cor(hvac_clean %>% select(-timestamp), use = "pairwise.complete.obs")
+
+# Set the diagonal to NA to de-emphasize trivial self-correlations
+diag(cor_matrix) <- NA
+
+# Generate the square ggplot-based heatmap
+ggcorrplot(
+  cor_matrix,
+  method = "square",
+  type = "full",
+  lab = TRUE,              
+  lab_size = 3.5,
+  lab_col = "black",       
+  colors = c("#f8766d", "white", "#00bfc4"), 
+  outline.color = "gray90",
+  legend.title = "Correlation"
+) +
+theme(
+  axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, face = "bold"),
+  axis.text.y = element_text(face = "bold")
+) +
+scale_y_discrete(limits = rev)
+```
+
+```{r}
+#| label: fig-pairs-plot
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 12
+#| fig-height: 12
+#| fig-cap: "Scatterplot matrix with correlation-mapped backgrounds (Sampled at n=5000)"
+
+library(GGally)
+
+# 1. Custom function to calculate correlation and map it to a background color
+custom_scatter_bg <- function(data, mapping, ...) {
+  x_data <- eval_data_col(data, mapping$x)
+  y_data <- eval_data_col(data, mapping$y)
+  
+  corr <- cor(x_data, y_data, use = "pairwise.complete.obs")
+  
+  color_fun <- colorRamp(c("#f8766d", "white", "#00bfc4")) 
+  scaled_corr <- (corr + 1) / 2 
+  
+  rgb_vec <- color_fun(scaled_corr)
+  hex_color <- rgb(rgb_vec[1], rgb_vec[2], rgb_vec[3], maxColorValue = 255)
+  
+  ggplot(data, mapping) +
+    annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf, 
+             fill = hex_color, alpha = 0.4) +
+    geom_point(...)
+}
+
+# 2. Generate the plot
+p_pairs <- hvac_clean %>%
+  select(-timestamp) %>% 
+  sample_n(5000) %>% 
+  ggpairs(
+    lower = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
+    upper = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
+    title = "Pairwise Scatterplot Matrix (HVAC Telemetry)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "gray80", fill = NA)
+  )
+
+p_pairs
+```
+
+```{r}
+#| label: fig-network-graph
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 7
+#| fig-height: 5
+#| fig-cap: "HVAC feature dependency network representing highly collinear clusters"
+
+# install.packages(c("igraph", "ggraph")) # Run in console if needed
+library(igraph)
+library(ggraph)
+library(dplyr)
+
+# 1. Calculate the baseline correlation matrix (excluding timestamp)
+cor_matrix <- cor(hvac_clean %>% select(-timestamp), use = "pairwise.complete.obs")
+
+# 2. Threshold the matrix to create an unweighted adjacency matrix
+#    Lowered to 0.8 to capture the primary temperature and humidity groupings
+adj_matrix <- ifelse(abs(cor_matrix) > 0.8, 1, 0)
+
+# 3. Remove self-loops (a variable is always perfectly correlated with itself)
+diag(adj_matrix) <- 0
+
+# 4. Convert the matrix into an undirected igraph object
+g <- graph_from_adjacency_matrix(adj_matrix, mode = "undirected")
+
+# 5. Plot the network graph
+set.seed(42) # Ensures consistent spatial layout
+ggraph(g, layout = "fr") + 
+  geom_edge_link(color = "gray70", width = 1.5, alpha = 0.8) +
+  geom_node_point(size = 14, color = "lightblue") +
+  geom_node_text(aes(label = name), color = "black", size = 3.5, fontface = "bold") +
+  theme_void() +
+  labs(
+    title = "HVAC Feature Dependency Network",
+    subtitle = "Connected components defined by absolute correlation > 0.8"
+  )
+```
+
+```{r}
+#| label: fig-components-threshold
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 7
+#| fig-height: 5
+#| fig-cap: "Network fragmentation across correlation thresholds"
+
+library(igraph)
+library(ggplot2)
+library(dplyr)
+library(purrr)
+
+# 1. Calculate the baseline correlation matrix (excluding timestamp)
+cor_matrix <- cor(hvac_clean %>% select(-timestamp), use = "pairwise.complete.obs")
+
+# 2. Define a sequence of thresholds from 0 to 0.99
+thresholds <- seq(0, 0.99, by = 0.01)
+
+# 3. Function to calculate number of components for a given threshold
+count_components <- function(th) {
+  # Create adjacency matrix for the current threshold
+  adj_matrix <- ifelse(abs(cor_matrix) > th, 1, 0)
+  diag(adj_matrix) <- 0
+  
+  # Build graph and count components
+  g <- graph_from_adjacency_matrix(adj_matrix, mode = "undirected")
+  components(g)$no
+}
+
+# 4. Map the function across all thresholds
+component_counts <- map_dbl(thresholds, count_components)
+
+# 5. Create a dataframe for plotting
+df_thresh <- data.frame(
+  Threshold = thresholds,
+  Components = component_counts
+)
+
+# 6. Plot the relationship as a step-like function
+ggplot(df_thresh, aes(x = Threshold, y = Components)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "navy", size = 1.5, alpha = 0.4) +
+  scale_y_continuous(breaks = seq(1, 10, by = 1)) +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+  theme_minimal() +
+  labs(
+    title = "Network Fragmentation Profile",
+    subtitle = "Tracking how the feature graph breaks into isolated components",
+    x = "Absolute Correlation Threshold (|r|)",
+    y = "Number of Connected Components"
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(face = "bold")
+  )
+```
+
+```{r}
+#| label: fig-spectral-analysis
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 9
+#| fig-height: 15
+#| fig-cap: "Power Spectral Density (Frequency Domain)"
+
+library(purrr)
+
+# 1. Custom function to calculate the periodogram
+get_periodogram <- function(series_name, data) {
+  
+  # Extract and mean-center the signal to remove the DC offset (0 frequency)
+  x <- na.omit(data[[series_name]])
+  x <- x - mean(x)
+  
+  n <- length(x)
+  
+  # Compute Fast Fourier Transform
+  p <- Mod(fft(x))^2 / n
+  
+  # We only need the first half of the spectrum (Nyquist limit)
+  half_n <- floor(n / 2)
+  p <- p[2:(half_n + 1)] 
+  
+  # Frequencies: convert from cycles-per-observation to Cycles per Day (cpd)
+  # 15 min intervals = 96 observations per day
+  freq <- (1:half_n) / n * 96 
+  
+  tibble(
+    Variable = series_name,
+    Frequency_cpd = freq,
+    Power = p
+  )
+}
+
+# 2. Select key distinct variables representing weather, load, and effort
+vars_to_analyze <- c("energy", "power", "rh_outdoor", "rh_return", "rh_supply",
+                     "sp_return", "t_outdoor", "t_return", "t_saturation", "t_supply")
+spectra_data <- map_dfr(vars_to_analyze, ~get_periodogram(.x, hvac_clean))
+
+# 3. Plot the periodograms
+ggplot(spectra_data, aes(x = Frequency_cpd, y = Power, color = Variable)) +
+  geom_line(alpha = 0.9) +
+  facet_wrap(~Variable, scales = "free_y", ncol = 1) +
+  # Focus strictly on low-frequency macro cycles (0 to 4 cycles per day)
+  coord_cartesian(xlim = c(0, 2)) + 
+  scale_x_continuous(
+    breaks = 0:4, 
+    labels = c("0", "1/day (24h)", "2/day (12h)", "3/day (8h)", "4/day (6h)")
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Spectral Decomposition of HVAC Telemetry",
+    subtitle = "Identifying dominant cyclical periods via Fast Fourier Transform",
+    x = "Frequency",
+    y = "Spectral Power"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 10)
+  )
+```
+
+<style>
+.floating-signature {
+  position: fixed;
+  bottom: 15px;
+  left: 15px;
+  font-size: 0.85em;
+  color: #777;
+  background-color: rgba(255, 255, 255, 0.85);
+  padding: 5px 10px;
+  border-radius: 5px;
+  z-index: 1000;
+  pointer-events: none; 
+}
+</style>
+
+<div class="floating-signature">
+  2026 Joël R. Pradines.
+</div>
+
+```{r, echo=FALSE}
+knitr::knit_exit()
+```
+
+Borda, Davide (2022), “Development of Anomaly Detectors for HVAC Systems using Machine Learning”, Mendeley Data, V1, doi: 10.17632/mjhr46dkj6.1
