@@ -898,6 +898,189 @@ qc_exploration <- map_dfr(3:4, get_expanded_profiles)
 print(qc_exploration, n = 10)
 ```
 
+```{r}
+#| label: anomaly-blast-radius
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Dynamic Cross-Section: The Sudden Trip Fault Signature"
+
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+# install.packages("patchwork") # Run in console if needed
+library(patchwork)
+
+# 1. Identify a classic "Sudden Trip" event (Signature 2 from our extreme pool)
+# We filter for a sharp negative energy surge and grab the most extreme score
+target_event <- hvac_scored %>%
+  filter(anomaly_score > 0.6, energy_deriv_15m < -5) %>%
+  arrange(desc(anomaly_score)) %>%
+  slice(1) %>%
+  pull(timestamp)
+
+# 2. Extract a 12-hour window (+/- 6 hours) around the event
+blast_radius <- hvac_scored %>%
+  filter(
+    timestamp >= (target_event - hours(6)),
+    timestamp <= (target_event + hours(6))
+  )
+
+# 3. Plot the raw physics (Energy and Temperature)
+p_physics <- ggplot(blast_radius, aes(x = timestamp)) +
+  geom_line(aes(y = t_return, color = "Return Temp"), linewidth = 1) +
+  geom_line(aes(y = t_supply, color = "Supply Temp"), linewidth = 1, alpha = 0.6) +
+  geom_step(aes(y = sp_return, color = "Setpoint"), linetype = "dashed") +
+  # Adding energy on a secondary visual scale (scaled for visibility against temp)
+  geom_col(aes(y = energy / 10, fill = "Energy (Scaled)"), alpha = 0.3) +
+  geom_vline(xintercept = target_event, color = "black", linetype = "dotted", linewidth = 1) +
+  scale_color_manual(values = c("Return Temp" = "darkblue", "Supply Temp" = "hotpink", "Setpoint" = "black")) +
+  scale_fill_manual(values = c("Energy (Scaled)" = "orange")) +
+  theme_minimal() +
+  labs(
+    title = sprintf("System Dynamics Around Event: %s", target_event),
+    subtitle = "Dotted line marks the exact moment of the structural break",
+    x = NULL, y = "Temperature (°C)"
+  ) +
+  theme(legend.position = "top", legend.title = element_blank())
+
+# 4. Plot the Anomaly Score profile
+p_score <- ggplot(blast_radius, aes(x = timestamp, y = anomaly_score)) +
+  geom_area(fill = "darkred", alpha = 0.2) +
+  geom_line(color = "darkred", linewidth = 1) +
+  geom_hline(yintercept = 0.6, linetype = "dashed", color = "black") +
+  geom_vline(xintercept = target_event, color = "black", linetype = "dotted", linewidth = 1) +
+  theme_minimal() +
+  labs(
+    x = "Time", y = "Anomaly Score"
+  )
+
+# 5. Stack the plots using patchwork
+p_physics / p_score + plot_layout(heights = c(2, 1))
+```
+
+```{r}
+#| label: visualize-remaining-signatures
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 10
+#| fig-height: 12
+#| fig-cap: "Dynamic Cross-Sections: Cold Blow and Envelope Breach"
+
+# 1. Permanently assign the k=3 clusters to the expanded dataset
+expanded_anomalies <- expanded_anomalies %>%
+  mutate(cluster = as.factor(cutree(as.hclust(diana_exp), k = 3)))
+
+# 2. Extract the single most extreme event for Signature 1 (Cold Blow)
+event_sig1 <- expanded_anomalies %>%
+  filter(cluster == 1) %>%
+  arrange(desc(anomaly_score)) %>%
+  slice(1) %>%
+  pull(timestamp)
+
+# 3. Extract the single most extreme event for Signature 3 (Envelope Breach)
+event_sig3 <- expanded_anomalies %>%
+  filter(cluster == 3) %>%
+  arrange(desc(anomaly_score)) %>%
+  slice(1) %>%
+  pull(timestamp)
+
+# 4. Create a reusable function to plot the 12-hour blast radius
+plot_blast_radius <- function(target_time, title_text) {
+  
+  window_data <- hvac_scored %>%
+    filter(
+      timestamp >= (target_time - hours(6)),
+      timestamp <= (target_time + hours(6))
+    )
+  
+  p_phys <- ggplot(window_data, aes(x = timestamp)) +
+    geom_line(aes(y = t_return, color = "Return Temp"), linewidth = 1) +
+    geom_line(aes(y = t_supply, color = "Supply Temp"), linewidth = 1, alpha = 0.6) +
+    geom_step(aes(y = sp_return, color = "Setpoint"), linetype = "dashed") +
+    geom_col(aes(y = energy / 10, fill = "Energy (Scaled)"), alpha = 0.3) +
+    geom_vline(xintercept = target_time, color = "black", linetype = "dotted", linewidth = 1) +
+    scale_color_manual(values = c("Return Temp" = "darkblue", "Supply Temp" = "hotpink", "Setpoint" = "black")) +
+    scale_fill_manual(values = c("Energy (Scaled)" = "orange")) +
+    theme_minimal() +
+    labs(
+      title = title_text,
+      subtitle = sprintf("Event Triggered: %s", format(target_time, "%Y-%m-%d %H:%M")),
+      x = NULL, y = "Temperature (°C)"
+    ) +
+    theme(legend.position = "top", legend.title = element_blank())
+  
+  p_score <- ggplot(window_data, aes(x = timestamp, y = anomaly_score)) +
+    geom_area(fill = "darkred", alpha = 0.2) +
+    geom_line(color = "darkred", linewidth = 1) +
+    geom_hline(yintercept = 0.55, linetype = "dashed", color = "black") +
+    geom_vline(xintercept = target_time, color = "black", linetype = "dotted", linewidth = 1) +
+    theme_minimal() +
+    labs(x = "Time", y = "Anomaly Score")
+  
+  return(p_phys / p_score + plot_layout(heights = c(2, 1)))
+}
+
+# 5. Generate and display the two diagnostic plots
+plot_sig1 <- plot_blast_radius(event_sig1, "Signature 1: The 'Cold Blow' (Actuator/Boiler Failure)")
+plot_sig3 <- plot_blast_radius(event_sig3, "Signature 3: The 'Envelope Breach' (Thermal Boundary Loss)")
+
+# Display plots side-by-side or stacked in the report
+plot_sig1
+plot_sig3
+```
+
+```{r}
+#| label: intra-cluster-consistency-check
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 12
+#| fig-height: 18
+
+library(purrr)
+library(patchwork)
+
+# 1. Function to extract and plot the Top N events for a specific cluster
+plot_cluster_top_n <- function(cluster_id, n = 3) {
+  
+  # Extract the top N timestamps for this specific cluster
+  top_events <- expanded_anomalies %>%
+    filter(cluster == cluster_id) %>%
+    arrange(desc(anomaly_score)) %>%
+    slice(1:n) %>%
+    pull(timestamp)
+  
+  # Map the timestamps to our previously built plot_blast_radius function
+  plots <- map2(
+    top_events,
+    seq_along(top_events),
+    ~plot_blast_radius(.x, sprintf("Signature %d | Rank %d | Event: %s", cluster_id, .y, .x))
+  )
+  
+  # Wrap the plots vertically into a single cohesive column
+  combined_plot <- wrap_plots(plots, ncol = 1) +
+    plot_annotation(
+      title = sprintf("Intra-Cluster Consistency: Fault Signature %d", cluster_id),
+      theme = theme(plot.title = element_text(size = 18, face = "bold"))
+    )
+  
+  return(combined_plot)
+}
+
+# 2. Generate the visual sheets for all three clusters
+consistency_sig1 <- plot_cluster_top_n(cluster_id = 1, n = 3)
+consistency_sig2 <- plot_cluster_top_n(cluster_id = 2, n = 3)
+consistency_sig3 <- plot_cluster_top_n(cluster_id = 3, n = 3)
+
+# 3. Print them to the Quarto document
+consistency_sig1
+consistency_sig2
+consistency_sig3
+```
 <style>
 .floating-signature {
   position: fixed;
