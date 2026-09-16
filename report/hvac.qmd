@@ -1081,6 +1081,520 @@ consistency_sig1
 consistency_sig2
 consistency_sig3
 ```
+
+```{r}
+#| label: double-clustering-temporal
+#| warning: false
+#| message: false
+#| echo: true
+
+library(dplyr)
+library(lubridate)
+
+# 1. Sort and calculate temporal gaps within each physical cluster
+temporal_events <- expanded_anomalies %>%
+  arrange(cluster, timestamp) %>%
+  group_by(cluster) %>%
+  mutate(
+    # Calculate time since previous anomaly in the SAME cluster
+    time_gap = as.numeric(difftime(timestamp, lag(timestamp, default = first(timestamp)), units = "hours")),
+    
+    # If the gap is greater than 6 hours, flag it as a new discrete event
+    is_new_event = ifelse(time_gap > 6, 1, 0),
+    
+    # Cumulative sum generates a unique ID for each continuous temporal block
+    sub_event_id = cumsum(is_new_event) + 1
+  ) %>%
+  ungroup() %>%
+  # Create a global unique Event ID combining physics and time
+  mutate(event_id = paste0("Sig", cluster, "_Evt", sub_event_id))
+
+# 2. Aggregate the individual timestamps into discrete Event Profiles
+event_summary <- temporal_events %>%
+  group_by(cluster, event_id) %>%
+  summarize(
+    onset_time = min(timestamp),
+    resolution_time = max(timestamp),
+    # Calculate how long the machine remained in a state of failure
+    duration_hrs = as.numeric(difftime(resolution_time, onset_time, units = "hours")),
+    peak_severity = max(anomaly_score),
+    affected_intervals = n(),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(peak_severity))
+
+# 3. Output the compression results
+cat(sprintf("Compressed %d individual anomalies into %d discrete physical events.\n\n", 
+            nrow(expanded_anomalies), nrow(event_summary)))
+
+# Display the top 10 most severe discrete events
+knitr::kable(head(event_summary, 15))
+```
+
+AUC score 
+
+```{r}
+#| label: operational-triage-scoring
+#| warning: false
+#| message: false
+#| echo: false
+
+# 1. Re-aggregate the events, adding the new mathematical and operational scores
+operational_event_summary <- temporal_events %>%
+  group_by(cluster, event_id) %>%
+  summarize(
+    onset_time = min(timestamp),
+    resolution_time = max(timestamp),
+    duration_hrs = as.numeric(difftime(resolution_time, onset_time, units = "hours")),
+    peak_severity = max(anomaly_score),
+    affected_intervals = n(),
+    
+    # Mathematical Engineering: The Integrated Anomaly Load (Area Under Curve)
+    integrated_load = round(sum(anomaly_score), 2),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Operational Engineering: The Triage Categorization
+    triage_level = factor(case_when(
+      duration_hrs >= 2.0 ~ "Priority 1 (Dispatch)",
+      duration_hrs >= 0.5 & duration_hrs < 2.0 ~ "Priority 2 (Queue)",
+      duration_hrs < 0.5 ~ "Priority 3 (Forensic/Watchlist)"
+    ), levels = c("Priority 1 (Dispatch)", "Priority 2 (Queue)", "Priority 3 (Forensic/Watchlist)"))
+  ) %>%
+  # Sort by the new Integrated Load instead of Peak Severity
+  arrange(desc(integrated_load))
+
+# 2. Print the newly engineered triage sheet
+print(head(operational_event_summary, 20), width = Inf)
+```
+
+```{r}
+#| label: excess-auc-dispatch-queues
+#| warning: false
+#| message: false
+#| echo: true
+
+# Define the baseline threshold used for event generation
+baseline_threshold <- 0.55
+
+# 1. Re-aggregate with the Excess AUC metric
+operational_event_summary <- temporal_events %>%
+  group_by(cluster, event_id) %>%
+  summarize(
+    onset_time = min(timestamp),
+    resolution_time = max(timestamp),
+    duration_hrs = as.numeric(difftime(resolution_time, onset_time, units = "hours")),
+    peak_severity = max(anomaly_score),
+    affected_intervals = n(),
+    
+    # Mathematical Fix: Sum only the area above the threshold
+    excess_auc = round(sum(anomaly_score - baseline_threshold), 3),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    triage_level = factor(case_when(
+      duration_hrs >= 2.0 ~ "Priority 1 (Dispatch)",
+      duration_hrs >= 0.5 & duration_hrs < 2.0 ~ "Priority 2 (Queue)",
+      duration_hrs < 0.5 ~ "Priority 3 (Forensic/Watchlist)"
+    ), levels = c("Priority 1 (Dispatch)", "Priority 2 (Queue)", "Priority 3 (Forensic/Watchlist)"))
+  ) %>%
+  # Sort by Cluster first, then by the new Excess AUC within that cluster
+  arrange(cluster, desc(excess_auc))
+
+# 2. Route the output into specialized dispatch queues
+dispatch_queues <- split(operational_event_summary, operational_event_summary$cluster)
+
+# 3. Print the top priority tickets for the Mechanical (Sig 1) and Electrical (Sig 2) queues
+cat("--- MECHANICAL DISPATCH QUEUE (Signature 1: Cold Blow / Actuator) ---\n")
+print(head(dispatch_queues[["1"]], 3), width = Inf)
+
+cat("\n--- ELECTRICAL DISPATCH QUEUE (Signature 2: Sudden Trip) ---\n")
+print(head(dispatch_queues[["2"]], 3), width = Inf)
+
+cat("\n--- ELECTRICAL DISPATCH QUEUE (Signature 3: Envelope Breach/Sensor Illusion) ---\n")
+print(head(dispatch_queues[["3"]], 3), width = Inf)
+```
+
+Fault Signatures & Dispatch Routing
+Signature 1: The 'Cold Blow' (Mechanical/Thermodynamic)
+
+Symptom: The system draws heavy energy and attempts to heat/cool, but no thermal exchange occurs (e.g., supply temperature flatlines).
+
+Required Personnel: Mechanical HVAC Technician (to inspect stuck actuators, broken boiler valves, or blocked ducts).
+
+Signature 2: The 'Sudden Trip' (Electrical/Kinematic)
+
+Symptom: An instantaneous drop in energy consumption to zero despite a high setpoint demand, resulting in stagnant supply air.
+
+Required Personnel: Licensed Electrician or Building Engineer (to reset tripped breakers, inspect motor relays, or diagnose power loss).
+
+Signature 3: The 'Telemetry Illusion' / 'Envelope Breach' (Digital/Structural)
+
+Symptom: Physically impossible thermodynamics (e.g., room temperature jumping 5°C in 15 minutes with zero energy draw) or a total loss of the thermal boundary.
+
+Required Personnel: IT/Controls Technician (to recalibrate or replace short-circuited sensors) or Facility Management (to secure open doors/windows).
+
+
+```{r}
+#| label: dtw-quantitative-proof
+#| warning: false
+#| message: false
+#| echo: true
+
+# install.packages("dtw") # Run in console if needed
+library(dtw)
+library(purrr)
+library(tidyr)
+library(dplyr)
+library(lubridate)
+library(cluster)
+
+# 1. Isolate the 52 extreme events and their assigned k=3 clusters
+extreme_events <- hvac_scored %>%
+  filter(anomaly_score > 0.6) %>%
+  # Re-run the strict k=3 clustering for just these 52 to ensure alignment
+  mutate(cluster = as.factor(cutree(as.hclust(diana(scale(
+    dplyr::select(., temp_error, delta_t, energy_deriv_15m, delta_t_deriv_15m)
+  ))), k = 3))) %>%
+  dplyr::select(timestamp, cluster)
+
+# 2. Extract a standardized 4-hour MULTIVARIATE time-series matrix for each event
+extract_ts_window_multi <- function(target_time) {
+  hvac_scored %>%
+    filter(
+      timestamp >= (target_time - hours(2)),
+      timestamp <= (target_time + hours(2))
+    ) %>%
+    # Select the exact same physics used in the DIANA clustering
+    dplyr::select(temp_error, delta_t, energy_deriv_15m, delta_t_deriv_15m) %>%
+    # Z-score normalize the entire matrix so energy and temp are on the same scale
+    scale() %>% 
+    as.matrix()
+}
+
+# Apply multivariate extraction to all 52 events
+event_ts_list_multi <- map(extreme_events$timestamp, extract_ts_window_multi)
+names(event_ts_list_multi) <- paste0("Event_", 1:nrow(extreme_events))
+
+# 3. Compute the O(N^2) MDTW distance matrix
+mdtw_dist_matrix <- matrix(NA, nrow = 52, ncol = 52)
+
+for (i in 1:52) {
+  for (j in 1:52) {
+    # The dtw() function automatically handles matrix vs matrix comparisons
+    mdtw_dist_matrix[i, j] <- dtw(event_ts_list_multi[[i]], 
+                                  event_ts_list_multi[[j]], 
+                                  distance.only = TRUE)$normalizedDistance
+  }
+}
+
+# 4. Summarize the Intra-Cluster vs Inter-Cluster distances
+dtw_results <- expand_grid(
+  Event_A = 1:52,
+  Event_B = 1:52
+) %>%
+  mutate(
+    Cluster_A = extreme_events$cluster[Event_A],
+    Cluster_B = extreme_events$cluster[Event_B],
+    Distance = as.vector(mdtw_dist_matrix) # FIXED: Now calling the MDTW matrix
+  ) %>%
+  filter(Event_A != Event_B) %>% # Remove self-comparisons (distance = 0)
+  mutate(Comparison_Type = ifelse(Cluster_A == Cluster_B, 
+                                  "Intra-Cluster (Same Fault)", 
+                                  "Inter-Cluster (Different Faults)"))
+
+# 5. Print the mathematical proof
+dtw_summary <- dtw_results %>%
+  group_by(Comparison_Type) %>%
+  summarize(
+    Mean_Warping_Distance = round(mean(Distance), 2),
+    Median_Warping_Distance = round(median(Distance), 2)
+  )
+
+print(dtw_summary)
+```
+
+```{r}
+#| label: monte-carlo-dtw-significance
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 8
+#| fig-height: 5
+
+library(ggplot2)
+
+# 1. Define our observed test statistic (Inter - Intra mean from your tibble)
+observed_diff <- 1.80 - 1.33
+
+# 2. Extract the actual distance matrix and true cluster labels
+# We use the mdtw_dist_matrix generated in the previous chunk
+true_labels <- extreme_events$cluster
+
+# 3. Setup the Monte Carlo permutation test
+n_permutations <- 1000
+null_distribution <- numeric(n_permutations)
+
+# Set seed for reproducible forensics
+set.seed(42)
+
+for(i in 1:n_permutations) {
+  # Shuffle the cluster assignments randomly
+  shuffled_labels <- sample(true_labels)
+  
+  # Create a logical matrix to identify which pairs are now "Intra-cluster"
+  is_intra <- outer(shuffled_labels, shuffled_labels, "==")
+  
+  # Use the upper triangle to avoid double counting and self-comparisons
+  upper_tri <- upper.tri(mdtw_dist_matrix)
+  
+  # Extract the randomized distances
+  sim_intra_dists <- mdtw_dist_matrix[upper_tri & is_intra]
+  sim_inter_dists <- mdtw_dist_matrix[upper_tri & !is_intra]
+  
+  # Calculate the simulated test statistic for this permutation
+  null_distribution[i] <- mean(sim_inter_dists, na.rm = TRUE) - mean(sim_intra_dists, na.rm = TRUE)
+}
+
+# 4. Calculate the empirical p-value
+p_value <- sum(null_distribution >= observed_diff) / n_permutations
+
+# 5. Visualize the proof
+mc_results <- data.frame(Simulated_Diff = null_distribution)
+
+ggplot(mc_results, aes(x = Simulated_Diff)) +
+  geom_histogram(fill = "gray70", color = "black", bins = 30) +
+  geom_vline(xintercept = observed_diff, color = "darkred", linewidth = 1.5, linetype = "dashed") +
+  theme_minimal() +
+  labs(
+    title = "Monte Carlo Permutation Test: Cluster Homogeneity",
+    subtitle = sprintf("Observed Difference = %s | p-value = %s (Based on %d permutations)", 
+                       observed_diff, format.pval(p_value, eps = 0.001), n_permutations),
+    x = "Difference (Inter-Cluster Mean - Intra-Cluster Mean)",
+    y = "Frequency in Random Assignments"
+  ) +
+  annotate("text", x = observed_diff, y = Inf, label = "Our Model's Reality", 
+           color = "darkred", vjust = 2, hjust = -0.1, fontface = "bold")
+```
+
+Here is the exact formula we are coding for the multivariate $T$ statistic between any two clusters $C_k$ and $C_l$:
+$$T_{kl} = \frac{m(C_k, C_l)}{s(C_k) + s(C_l)}$$
+Where:
+- $m(C_k, C_l)$: The average pairwise distance between elements of different clusters.
+- $s(C_k)$: The average pairwise distance within a single cluster.
+
+```{r}
+#| label: sobolev-t-statistic-matrix
+#| warning: false
+#| message: false
+#| echo: true
+
+library(dplyr)
+library(tidyr)
+
+# 1. Define the mathematical helper functions for the Sobolev T-statistic
+calc_s <- function(dist_mat, indices) {
+  # Average intra-cluster distance
+  n <- length(indices)
+  if (n < 2) return(NA) # Cannot compute for single-element clusters
+  sub_mat <- dist_mat[indices, indices]
+  # Sum only the upper triangle to avoid double counting, then apply formula
+  return(sum(sub_mat[upper.tri(sub_mat)]) * 2 / (n * (n - 1)))
+}
+
+calc_m <- function(dist_mat, indices_k, indices_l) {
+  # Average inter-cluster distance
+  nk <- length(indices_k)
+  nl <- length(indices_l)
+  if (nk == 0 | nl == 0) return(NA)
+  sub_mat <- dist_mat[indices_k, indices_l]
+  return(sum(sub_mat) / (nk * nl))
+}
+
+calc_T_matrix <- function(dist_mat, labels) {
+  # Generate the full pairwise T-statistic matrix for k clusters
+  unique_clusters <- sort(unique(labels))
+  k <- length(unique_clusters)
+  T_mat <- matrix(NA, nrow = k, ncol = k, 
+                  dimnames = list(unique_clusters, unique_clusters))
+  
+  # Precompute s(C) for all clusters to save redundant operations
+  s_vals <- sapply(unique_clusters, function(c) {
+    calc_s(dist_mat, which(labels == c))
+  })
+  
+  # Calculate T_kl for the upper triangle
+  for (i in 1:(k-1)) {
+    for (j in (i+1):k) {
+      idx_k <- which(labels == unique_clusters[i])
+      idx_l <- which(labels == unique_clusters[j])
+      
+      m_val <- calc_m(dist_mat, idx_k, idx_l)
+      T_mat[i, j] <- m_val / (s_vals[i] + s_vals[j])
+    }
+  }
+  return(T_mat)
+}
+
+# 2. Calculate the True Observed T-Matrix
+true_labels <- extreme_events$cluster
+observed_T_mat <- calc_T_matrix(mdtw_dist_matrix, true_labels)
+
+# 3. Execute the Size-Preserved Monte Carlo Permutations
+n_permutations <- 1000
+set.seed(42)
+
+# Initialize an array to hold all 1000 simulated 3x3 matrices
+sim_T_arrays <- array(NA, dim = c(3, 3, n_permutations))
+
+for (p in 1:n_permutations) {
+  # Shuffling the labels vector guarantees identical group sizes |Ck| and |Cl|
+  shuffled_labels <- sample(true_labels)
+  sim_T_arrays[, , p] <- calc_T_matrix(mdtw_dist_matrix, shuffled_labels)
+}
+
+# 4. Calculate the empirical p-value element-by-element
+p_value_mat <- matrix(NA, nrow = 3, ncol = 3, 
+                      dimnames = dimnames(observed_T_mat))
+
+for (i in 1:2) {
+  for (j in (i+1):3) {
+    obs_val <- observed_T_mat[i, j]
+    # Extract the vector of 1000 simulated values for this specific T_kl pair
+    sim_vals <- sim_T_arrays[i, j, ]
+    
+    # Calculate how often a random distribution generated a T-stat >= our observed
+    p_value_mat[i, j] <- sum(sim_vals >= obs_val, na.rm = TRUE) / n_permutations
+  }
+}
+
+# 5. Format and print the final proof
+results_df <- data.frame(
+  Pair = c("Sig 1 vs Sig 2", "Sig 1 vs Sig 3", "Sig 2 vs Sig 3"),
+  Observed_T = c(observed_T_mat[1,2], observed_T_mat[1,3], observed_T_mat[2,3]),
+  p_value = c(p_value_mat[1,2], p_value_mat[1,3], p_value_mat[2,3])
+) %>%
+  mutate(
+    Observed_T = round(Observed_T, 3),
+    Significance = ifelse(p_value < 0.001, "< 0.001", as.character(p_value))
+  )
+
+cat("--- Sobolev Multivariate T-Statistic Matrix Proof ---\n\n")
+print(results_df, row.names = FALSE)
+```
+
+```{r}
+#| label: sobolev-k4-stress-test
+#| warning: false
+#| message: false
+#| echo: true
+
+# 1. Force DIANA to split the data into 4 clusters instead of 3
+extreme_events_k4 <- hvac_scored %>%
+  filter(anomaly_score > 0.6) %>%
+  mutate(cluster = as.factor(cutree(as.hclust(diana(scale(
+    dplyr::select(., temp_error, delta_t, energy_deriv_15m, delta_t_deriv_15m)
+  ))), k = 4)))
+
+true_labels_k4 <- extreme_events_k4$cluster
+
+# 2. Calculate the True Observed T-Matrix for the 4 clusters
+observed_T_mat_k4 <- calc_T_matrix(mdtw_dist_matrix, true_labels_k4)
+
+# 3. Execute the Size-Preserved Monte Carlo Permutations
+n_permutations <- 10000
+set.seed(42)
+
+sim_T_arrays_k4 <- array(NA, dim = c(4, 4, n_permutations))
+
+for (p in 1:n_permutations) {
+  shuffled_labels_k4 <- sample(true_labels_k4)
+  sim_T_arrays_k4[, , p] <- calc_T_matrix(mdtw_dist_matrix, shuffled_labels_k4)
+}
+
+# 4. Calculate the empirical p-value for all 6 possible pairs
+pairs_list <- list()
+row_idx <- 1
+
+for (i in 1:3) {
+  for (j in (i+1):4) {
+    obs_val <- observed_T_mat_k4[i, j]
+    sim_vals <- sim_T_arrays_k4[i, j, ]
+    p_val <- sum(sim_vals >= obs_val, na.rm = TRUE) / n_permutations
+    
+    pairs_list[[row_idx]] <- data.frame(
+      Pair = paste("Sig", i, "vs Sig", j),
+      Observed_T = obs_val,
+      p_value = p_val
+    )
+    row_idx <- row_idx + 1
+  }
+}
+
+# 5. Format and print the final proof
+results_k4 <- bind_rows(pairs_list) %>%
+  mutate(
+    Observed_T = round(Observed_T, 4),
+    Significance = ifelse(p_value < 0.0001, "< 0.0001", as.character(signif(p_value, 3)))
+  ) %>%
+  arrange(desc(p_value), Observed_T) # Sort so the worst pair bubbles to the top
+
+cat("--- Sobolev T-Statistic Proof (Forced k=4 Split) ---\n\n")
+print(results_k4, row.names = FALSE)
+```
+
+```{r}
+#| label: extract-cluster-archetypes
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 12
+#| fig-height: 18
+
+# 1. Add original row indices to keep track of the matrix positions
+extreme_events <- extreme_events %>%
+  mutate(matrix_idx = row_number())
+
+# 2. Function to find the Medoid for a given cluster
+get_cluster_medoid <- function(target_cluster) {
+  # Get the matrix indices for the events in this cluster
+  cluster_indices <- extreme_events %>%
+    filter(cluster == target_cluster) %>%
+    pull(matrix_idx)
+  
+  # Subset the MDTW distance matrix for just these events
+  sub_matrix <- mdtw_dist_matrix[cluster_indices, cluster_indices]
+  
+  # Find the local index with the minimum sum of distances to all others
+  medoid_local_idx <- which.min(rowSums(sub_matrix))
+  
+  # Map back to the global event ID and timestamp
+  medoid_global_idx <- cluster_indices[medoid_local_idx]
+  medoid_timestamp <- extreme_events$timestamp[medoid_global_idx]
+  
+  return(medoid_timestamp)
+}
+
+# 3. Extract the exact timestamps for the three Archetypes
+archetype_sig1 <- get_cluster_medoid(1)
+archetype_sig2 <- get_cluster_medoid(2)
+archetype_sig3 <- get_cluster_medoid(3)
+
+cat(sprintf("Archetype for Signature 1 (Cold Blow): %s\n", archetype_sig1))
+cat(sprintf("Archetype for Signature 2 (Sudden Trip): %s\n", archetype_sig2))
+cat(sprintf("Archetype for Signature 3 (Envelope/Digital): %s\n\n", archetype_sig3))
+
+# 4. Visualize the Archetypes individually
+plot_a1 <- plot_blast_radius(archetype_sig1, "ARCHETYPE: Signature 1 (The Cold Blow)")
+plot_a2 <- plot_blast_radius(archetype_sig2, "ARCHETYPE: Signature 2 (The Sudden Trip)")
+plot_a3 <- plot_blast_radius(archetype_sig3, "ARCHETYPE: Signature 3 (The Envelope Breach)")
+
+# Print sequentially instead of wrapping into a single mega-plot
+plot_a1
+plot_a2
+plot_a3
+```
+
 <style>
 .floating-signature {
   position: fixed;
