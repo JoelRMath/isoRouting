@@ -1595,6 +1595,294 @@ plot_a2
 plot_a3
 ```
 
+
+```{r}
+#| label: optimize-k-non-monotonic
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 8
+#| fig-height: 5
+
+library(cluster)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# 1. Re-establish the baseline DIANA clustering tree
+event_features <- hvac_scored %>%
+  filter(anomaly_score > 0.6) %>%
+  dplyr::select(temp_error, delta_t, energy_deriv_15m, delta_t_deriv_15m) %>%
+  scale()
+
+# Compute the hierarchical tree once
+hc_tree <- as.hclust(diana(event_features))
+
+# 2. Define the Harmonic Pairwise Silhouette function
+calc_harmonic_pairwise_sil <- function(dist_mat, labels) {
+  k_unique <- sort(unique(labels))
+  k <- length(k_unique)
+  
+  pairwise_means <- c()
+  
+  for (i in 1:(k-1)) {
+    for (j in (i+1):k) {
+      cl_A <- k_unique[i]
+      cl_B <- k_unique[j]
+      
+      idx <- which(labels %in% c(cl_A, cl_B))
+      sub_mat <- dist_mat[idx, idx]
+      sub_labels <- as.character(labels[idx])
+      
+      # Calculate silhouette for this specific pair
+      sil_obj <- silhouette(as.numeric(as.factor(sub_labels)), dmatrix = sub_mat)
+      mean_sil <- mean(sil_obj[, "sil_width"])
+      
+      # Strict Penalty: Clamp negative/zero scores to 0.001 to penalize the harmonic mean
+      if (is.na(mean_sil) || mean_sil <= 0) mean_sil <- 0.001 
+      
+      pairwise_means <- c(pairwise_means, mean_sil)
+    }
+  }
+  
+  # Harmonic Mean formula: m / sum(1/x)
+  h_mean <- length(pairwise_means) / sum(1 / pairwise_means)
+  return(h_mean)
+}
+
+# 3. Define the Global Silhouette function
+calc_global_sil <- function(dist_mat, labels) {
+  sil_obj <- silhouette(as.numeric(as.factor(labels)), dmatrix = dist_mat)
+  return(mean(sil_obj[, "sil_width"]))
+}
+
+# 4. Execute the iteration loop
+k_values <- 2:6
+results <- data.frame(
+  k = k_values, 
+  Global_Silhouette = NA, 
+  Harmonic_Pairwise = NA
+)
+
+for (i in seq_along(k_values)) {
+  current_k <- k_values[i]
+  current_labels <- cutree(hc_tree, k = current_k)
+  
+  results$Global_Silhouette[i] <- calc_global_sil(mdtw_dist_matrix, current_labels)
+  results$Harmonic_Pairwise[i] <- calc_harmonic_pairwise_sil(mdtw_dist_matrix, current_labels)
+}
+
+# 5. Print the numerical results
+cat("--- Cluster Integrity Analysis (k = 2 to 6) ---\n\n")
+print(results %>% mutate(across(where(is.numeric), ~round(., 3))))
+
+# 6. Plot the Non-Monotonic Curves
+results_long <- results %>%
+  pivot_longer(cols = c(Global_Silhouette, Harmonic_Pairwise), 
+               names_to = "Metric", values_to = "Score") %>%
+  mutate(Metric = ifelse(Metric == "Global_Silhouette", 
+                         "Global Silhouette (Standard)", 
+                         "Harmonic Pairwise (Strict Penalty)"))
+
+ggplot(results_long, aes(x = k, y = Score, color = Metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 4) +
+  scale_color_manual(values = c("Global Silhouette (Standard)" = "steelblue", 
+                                "Harmonic Pairwise (Strict Penalty)" = "darkred")) +
+  theme_minimal() +
+  labs(
+    title = "Self-Tuning k-Optimization: Finding the Fracture Point",
+    subtitle = "Tracking geometric integrity of MDTW distances across cluster counts",
+    x = "Number of Clusters (k)",
+    y = "Effect Size / Integrity Score"
+  ) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+```{r}
+#| label: optimize-k-weighted-harmonic
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 8
+#| fig-height: 5
+
+# 1. Define the Weighted Harmonic Pairwise Silhouette function
+calc_weighted_harmonic_sil <- function(dist_mat, labels) {
+  k_unique <- sort(unique(labels))
+  k <- length(k_unique)
+  
+  pairwise_scores <- c()
+  pairwise_weights <- c()
+  
+  for (i in 1:(k-1)) {
+    for (j in (i+1):k) {
+      cl_A <- k_unique[i]
+      cl_B <- k_unique[j]
+      
+      idx <- which(labels %in% c(cl_A, cl_B))
+      sub_mat <- dist_mat[idx, idx]
+      sub_labels <- as.character(labels[idx])
+      
+      # Calculate silhouette
+      sil_obj <- silhouette(as.numeric(as.factor(sub_labels)), dmatrix = sub_mat)
+      mean_sil <- mean(sil_obj[, "sil_width"])
+      
+      if (is.na(mean_sil) || mean_sil <= 0) mean_sil <- 0.001 
+      
+      pairwise_scores <- c(pairwise_scores, mean_sil)
+      
+      # The Fix: Weight by the combined operational volume of the two clusters
+      weight <- sum(labels == cl_A) + sum(labels == cl_B)
+      pairwise_weights <- c(pairwise_weights, weight)
+    }
+  }
+  
+  # Weighted Harmonic Mean formula
+  w_h_mean <- sum(pairwise_weights) / sum(pairwise_weights / pairwise_scores)
+  return(w_h_mean)
+}
+
+# 2. Execute the iteration loop
+results_weighted <- data.frame(
+  k = k_values, 
+  Global_Silhouette = results$Global_Silhouette, # Re-use from previous chunk
+  Weighted_Harmonic = NA
+)
+
+for (i in seq_along(k_values)) {
+  current_labels <- cutree(hc_tree, k = k_values[i])
+  results_weighted$Weighted_Harmonic[i] <- calc_weighted_harmonic_sil(mdtw_dist_matrix, current_labels)
+}
+
+# 3. Plot the Corrected Curves
+results_w_long <- results_weighted %>%
+  pivot_longer(cols = c(Global_Silhouette, Weighted_Harmonic), 
+               names_to = "Metric", values_to = "Score") %>%
+  mutate(Metric = ifelse(Metric == "Global_Silhouette", 
+                         "Global Silhouette (Standard)", 
+                         "Weighted Harmonic (Size-Penalized)"))
+
+ggplot(results_w_long, aes(x = k, y = Score, color = Metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 4) +
+  scale_color_manual(values = c("Global Silhouette (Standard)" = "steelblue", 
+                                "Weighted Harmonic (Size-Penalized)" = "darkorange3")) +
+  theme_minimal() +
+  labs(
+    title = "Self-Tuning k-Optimization: The Size-Weighted Correction",
+    subtitle = "Accounting for operational volume to eliminate micro-cluster bias",
+    x = "Number of Clusters (k)",
+    y = "Effect Size / Integrity Score"
+  ) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+```{r}
+#| label: optimize-k-product-weighted
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 8
+#| fig-height: 5
+
+calc_product_weighted_harmonic_sil <- function(dist_mat, labels) {
+  k_unique <- sort(unique(labels))
+  k <- length(k_unique)
+  
+  pairwise_scores <- c()
+  pairwise_weights <- c()
+  
+  for (i in 1:(k-1)) {
+    for (j in (i+1):k) {
+      cl_A <- k_unique[i]
+      cl_B <- k_unique[j]
+      
+      idx <- which(labels %in% c(cl_A, cl_B))
+      sub_mat <- dist_mat[idx, idx]
+      sub_labels <- as.character(labels[idx])
+      
+      sil_obj <- silhouette(as.numeric(as.factor(sub_labels)), dmatrix = sub_mat)
+      mean_sil <- mean(sil_obj[, "sil_width"])
+      
+      if (is.na(mean_sil) || mean_sil <= 0) mean_sil <- 0.001 
+      
+      pairwise_scores <- c(pairwise_scores, mean_sil)
+      
+      # The Edge-Weight Fix: Product instead of Sum
+      weight <- sum(labels == cl_A) * sum(labels == cl_B)
+      # weight <- sqrt((1/sum(labels == cl_A))) + sqrt((1/sum(labels == cl_B)))
+      pairwise_weights <- c(pairwise_weights, weight)
+    }
+  }
+  
+  # Weighted Harmonic Mean formula remains structurally the same
+  w_h_mean <- sum(pairwise_weights) / sum(pairwise_weights / pairwise_scores)
+  return(w_h_mean)
+}
+
+# Execute the iteration loop for the new metric
+results_prod_weighted <- data.frame(k = 2:6, Product_Weighted_Harmonic = NA)
+
+for (i in seq_along(results_prod_weighted$k)) {
+  current_labels <- cutree(hc_tree, k = results_prod_weighted$k[i])
+  results_prod_weighted$Product_Weighted_Harmonic[i] <- calc_product_weighted_harmonic_sil(
+    mdtw_dist_matrix, current_labels
+  )
+}
+
+# Print the numerical results to see if the peak shifted
+print(results_prod_weighted %>% mutate(Product_Weighted_Harmonic = round(Product_Weighted_Harmonic, 3)))
+```
+
+
+```{r}
+#| label: extract-k4-medoids
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 12
+#| fig-height: 24
+
+# 1. Force the k=4 cut
+extreme_events_k4 <- hvac_scored %>%
+  filter(anomaly_score > 0.6) %>%
+  mutate(
+    matrix_idx = row_number(),
+    cluster = as.factor(cutree(hc_tree, k = 4))
+  )
+
+# 2. Re-use the medoid extraction logic
+get_k4_medoid <- function(target_cluster) {
+  cluster_indices <- extreme_events_k4 %>%
+    filter(cluster == target_cluster) %>%
+    pull(matrix_idx)
+  
+  sub_matrix <- mdtw_dist_matrix[cluster_indices, cluster_indices]
+  medoid_local_idx <- which.min(rowSums(sub_matrix))
+  
+  medoid_global_idx <- cluster_indices[medoid_local_idx]
+  return(extreme_events_k4$timestamp[medoid_global_idx])
+}
+
+arch_k4_1 <- get_k4_medoid(1)
+arch_k4_2 <- get_k4_medoid(2)
+arch_k4_3 <- get_k4_medoid(3)
+arch_k4_4 <- get_k4_medoid(4)
+
+# 3. Visualize the four Archetypes
+plot_k4_1 <- plot_blast_radius(arch_k4_1, "k=4 ARCHETYPE 1")
+plot_k4_2 <- plot_blast_radius(arch_k4_2, "k=4 ARCHETYPE 2")
+plot_k4_3 <- plot_blast_radius(arch_k4_3, "k=4 ARCHETYPE 3")
+plot_k4_4 <- plot_blast_radius(arch_k4_4, "k=4 ARCHETYPE 4")
+
+# Print sequentially for Quarto rendering
+plot_k4_1
+plot_k4_2
+plot_k4_3
+plot_k4_4
+```
+
 <style>
 .floating-signature {
   position: fixed;
