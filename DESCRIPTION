@@ -1,4 +1,4 @@
-Package: hvacpred
+Package: dynaRchetypes
 Title: Diagnostic Engine for HVAC Telemetry and Fault Prediction
 Version: 0.1.0
 Authors@R: person("Joël R.", "Pradines", email = "joel.pradines@gmail.com", role = c("aut", "cre"))
