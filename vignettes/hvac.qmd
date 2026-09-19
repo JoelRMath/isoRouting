@@ -631,6 +631,7 @@ top_anomalies <- hvac_scored %>%
 
 # Display the top 5 worst mechanical events
 head(top_anomalies, 5)
+print(paste0("QC CHECK:", nrow(top_anomalies)))
 ```
 
 ```{r}

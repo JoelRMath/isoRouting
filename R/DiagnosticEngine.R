@@ -181,12 +181,27 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
     }
   }
   
+  # 2.5 Fetch ML Hyperparameters from YAML
+  sample_size <- object@feature_schema$sample_size
+  if (is.null(sample_size)) sample_size <- 256
+  
+  ntrees <- object@feature_schema$ntrees
+  if (is.null(ntrees)) ntrees <- 500
+  
   # 3. Train Isolation Forest and Score Space
-  # Using isotree for highly optimized C++ scoring
   message("Training Isolation Forest and scoring feature space...")
-  set.seed(7)
-  iso_model <- isotree::isolation.forest(object@feature_matrix, ntrees = 500, nthreads = 1)
-  scores <- predict(iso_model, object@feature_matrix)
+  set.seed(42)
+  
+  # Defense: Cap sample size to dataset length for mocked/tiny data
+  actual_sample_size <- min(sample_size, nrow(object@feature_matrix))
+  
+  iso_model <- suppressWarnings(isotree::isolation.forest(
+    object@feature_matrix, 
+    ntrees = ntrees, 
+    sample_size = actual_sample_size, 
+    missing_action = "fail"
+  ))
+  scores <- stats::predict(iso_model, object@feature_matrix)
   
   # 4. Bind and Filter
   # We bind to raw_telemetry to ensure timestamps and external IDs are preserved
@@ -299,22 +314,26 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
         sub_mat <- d_mat[idx, idx]
         sub_labels <- as.character(lbls[idx])
         
-        # Calculate standard pairwise silhouette
-        sil_obj <- cluster::silhouette(as.numeric(as.factor(sub_labels)), dmatrix = sub_mat)
-        mean_sil <- mean(sil_obj[, "sil_width"])
+        # Defensive Silhouette
+        sil_obj <- suppressWarnings(cluster::silhouette(as.numeric(as.factor(sub_labels)), dmatrix = sub_mat))
+        
+        if (is.matrix(sil_obj) && "sil_width" %in% colnames(sil_obj)) {
+          mean_sil <- mean(sil_obj[, "sil_width"], na.rm = TRUE)
+        } else {
+          mean_sil <- 0.001
+        }
         
         # Strict Penalty: Clamp negative/zero scores
         if (is.na(mean_sil) || mean_sil <= 0) mean_sil <- 0.001 
         
         pairwise_scores <- c(pairwise_scores, mean_sil)
         
-        # Edge-Weighting: Product of cluster sizes
+        # Edge-Weighting
         weight <- sum(lbls == cl_A) * sum(lbls == cl_B)
         pairwise_weights <- c(pairwise_weights, weight)
       }
     }
     
-    # Harmonic Mean Formula
     return(sum(pairwise_weights) / sum(pairwise_weights / pairwise_scores))
   }
   
@@ -324,11 +343,25 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
   
   for (i in seq_along(results$k)) {
     curr_k <- results$k[i]
+    
+    # Defense: Cannot cut into more clusters than we have isolated anomalies
+    if (curr_k >= nrow(dist_mat)) {
+      results$Global_Silhouette[i] <- NA
+      results$Product_Weighted_Harmonic[i] <- NA
+      next
+    }
+    
     lbls <- stats::cutree(hc_tree, k = curr_k)
     
-    # Calculate Metrics
-    global_sil <- cluster::silhouette(lbls, dmatrix = dist_mat)
-    results$Global_Silhouette[i] <- mean(global_sil[, "sil_width"])
+    # Calculate Global Silhouette with defense
+    global_sil <- suppressWarnings(cluster::silhouette(lbls, dmatrix = dist_mat))
+    
+    if (is.matrix(global_sil) && "sil_width" %in% colnames(global_sil)) {
+      results$Global_Silhouette[i] <- mean(global_sil[, "sil_width"], na.rm = TRUE)
+    } else {
+      results$Global_Silhouette[i] <- NA
+    }
+    
     results$Product_Weighted_Harmonic[i] <- calc_product_weighted_harmonic(dist_mat, lbls)
     
     # Extract Medoids for this specific k
@@ -336,7 +369,6 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
     for (c in 1:curr_k) {
       cluster_idx <- which(lbls == c)
       
-      # Handle potential micro-clusters of size 1 safely
       if (length(cluster_idx) == 1) {
         medoid_global <- cluster_idx
       } else {
@@ -345,11 +377,9 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
         medoid_global <- cluster_idx[medoid_local]
       }
       
-      # Extract the exact timestamp of the medoid
       k_medoids <- c(k_medoids, as.character(object@anomalies$timestamp[medoid_global]))
     }
     
-    # Store in the list using k as the name (e.g., medoids_list[["4"]])
     medoids_list[[as.character(curr_k)]] <- k_medoids
   }
   
@@ -358,9 +388,14 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
   object@medoids <- medoids_list
   object@domain_state <- "calibrated"
   
-  # 5. Output the Mathematical Recommendation
-  best_k <- results$k[which.max(results$Product_Weighted_Harmonic)]
-  message(sprintf("Calibration complete. Mathematical recommendation based on Edge-Weighted Harmonic penalty: k=%d", best_k))
+  # 5. Output the Mathematical Recommendation (Ignore NAs)
+  valid_idx <- which(!is.na(results$Product_Weighted_Harmonic))
+  if (length(valid_idx) > 0) {
+    best_k <- results$k[valid_idx[which.max(results$Product_Weighted_Harmonic[valid_idx])]]
+    message(sprintf("Calibration complete. Mathematical recommendation based on Edge-Weighted Harmonic penalty: k=%d", best_k))
+  } else {
+    message("Calibration complete. No valid metrics generated (clusters too small).")
+  }
   
   return(object)
 })
