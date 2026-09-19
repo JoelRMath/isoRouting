@@ -1,0 +1,8 @@
+facility_name: Turin R&D Facility
+target_variables:
+- temp_error
+- delta_t
+- energy_deriv_15m
+- delta_t_deriv_15m
+anomaly_threshold: 0.6
+temporal_window_hours: 2.0

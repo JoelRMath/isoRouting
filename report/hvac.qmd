@@ -1835,6 +1835,7 @@ for (i in seq_along(results_prod_weighted$k)) {
 print(results_prod_weighted %>% mutate(Product_Weighted_Harmonic = round(Product_Weighted_Harmonic, 3)))
 ```
 
+Optimal weight is product cluster sizes.
 
 ```{r}
 #| label: extract-k4-medoids

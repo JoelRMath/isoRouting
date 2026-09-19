@@ -1,0 +1,17 @@
+Package: hvacpred
+Title: Diagnostic Engine for HVAC Telemetry and Fault Prediction
+Version: 0.1.0
+Authors@R: person("Joël R.", "Pradines", email = "joel.pradines@gmail.com", role = c("aut", "cre"))
+Description: An S4-based diagnostic engine designed to detect, cluster, and route multivariate anomalies in physical systems. It utilizes Isolation Forests for initial anomaly extraction, followed by hierarchical clustering of multivariate dynamic time warping (MDTW) profiles. Finally, it utilizes edge-weighted harmonic penalties to identify true physical failure states.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
+Imports: 
+    cluster,
+    dplyr,
+    dtw,
+    isotree,
+    lubridate,
+    purrr,
+    yaml
