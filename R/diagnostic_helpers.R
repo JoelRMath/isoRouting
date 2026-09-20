@@ -133,3 +133,127 @@ extract_medoid_windows <- function(object, k) {
   
   return(plot_df_long)
 }
+
+#' @title Evaluate Isolation Forest Stability
+#' @description Evaluates the reproducibility of anomaly scores across varying 
+#' hyperparameter configurations by comparing them to a high-density baseline model.
+#' @param object A DiagnosticEngine object with ingested telemetry.
+#' @param ntrees_seq Numeric vector of tree counts to evaluate.
+#' @param sample_size_seq Numeric vector of sample sizes to evaluate.
+#' @param baseline_ntrees Integer. Trees for the gold-standard baseline (default 2000).
+#' @param baseline_sample Integer. Sample size for the gold-standard baseline (default 1024).
+#' @return A data.frame mapping hyperparameter combinations to Spearman rank correlation.
+#' @export
+evaluate_forest_stability <- function(object, 
+                                      ntrees_seq = c(50, 100, 250, 500, 1000), 
+                                      sample_size_seq = c(64, 128, 256, 512),
+                                      baseline_ntrees = 2000,
+                                      baseline_sample = 1024) {
+  
+  if (object@domain_state == "uninitialized") {
+    stop("Telemetry must be ingested before evaluating stability.")
+  }
+  
+  message(sprintf("Building baseline model (%d trees, sample size %d)...", 
+                  baseline_ntrees, baseline_sample))
+  
+  set.seed(42)
+  base_model <- suppressWarnings(isotree::isolation.forest(
+    object@feature_matrix, 
+    ntrees = baseline_ntrees, 
+    sample_size = baseline_sample, 
+    missing_action = "fail"
+  ))
+  base_scores <- stats::predict(base_model, object@feature_matrix)
+  
+  results <- list()
+  grid <- expand.grid(ntrees = ntrees_seq, sample_size = sample_size_seq)
+  
+  message(sprintf("Evaluating %d hyperparameter combinations...", nrow(grid)))
+  
+  for (i in seq_len(nrow(grid))) {
+    nt <- grid$ntrees[i]
+    ss <- grid$sample_size[i]
+    
+    # Iterate the seed slightly to ensure unique random cuts for each test run
+    set.seed(42 + i) 
+    test_model <- suppressWarnings(isotree::isolation.forest(
+      object@feature_matrix, 
+      ntrees = nt, 
+      sample_size = ss, 
+      missing_action = "fail"
+    ))
+    test_scores <- stats::predict(test_model, object@feature_matrix)
+    
+    # Evaluate rank preservation
+    rank_cor <- stats::cor(base_scores, test_scores, method = "spearman")
+    
+    results[[i]] <- data.frame(
+      ntrees = nt,
+      sample_size = ss,
+      spearman_rho = rank_cor
+    )
+  }
+  
+  return(dplyr::bind_rows(results))
+}
+
+#' @title Evaluate Prognostic Drift
+#' @description Evaluates out-of-sample predictive stability by training an Isolation Forest 
+#' on historical data and scoring future data, comparing results to a full-context baseline.
+#' @param object A DiagnosticEngine object with ingested telemetry.
+#' @param train_fraction Numeric. Fraction of chronological data to use for training (default 0.6).
+#' @param ntrees Integer. Number of trees for the forests (default 500).
+#' @param sample_size Integer. Sample size for the forests (default 256).
+#' @return A data.frame containing the test timestamps, out-of-sample scores, and baseline scores.
+#' @export
+evaluate_prognostic_drift <- function(object, 
+                                      train_fraction = 0.6, 
+                                      ntrees = 500, 
+                                      sample_size = 256) {
+  
+  if (object@domain_state == "uninitialized") {
+    stop("Telemetry must be ingested before evaluating prognostic drift.")
+  }
+  
+  fm <- object@feature_matrix
+  n_total <- nrow(fm)
+  n_train <- floor(n_total * train_fraction)
+  
+  if (n_train < sample_size) stop("Training fraction yields fewer rows than sample_size.")
+  
+  # Strict chronological split
+  train_mat <- fm[1:n_train, , drop = FALSE]
+  test_mat <- fm[(n_train + 1):n_total, , drop = FALSE]
+  
+  message(sprintf("Building baseline model on full dataset (N=%d)...", n_total))
+  set.seed(42)
+  base_model <- suppressWarnings(isotree::isolation.forest(
+    fm, ntrees = ntrees, sample_size = sample_size, missing_action = "fail"
+  ))
+  # Score only the test portion using the full-context model
+  base_scores <- stats::predict(base_model, test_mat)
+  
+  message(sprintf("Building prognostic model on training split (N=%d)...", n_train))
+  set.seed(42)
+  prog_model <- suppressWarnings(isotree::isolation.forest(
+    train_mat, ntrees = ntrees, sample_size = sample_size, missing_action = "fail"
+  ))
+  # Score the test portion using the historically-trained model
+  oos_scores <- stats::predict(prog_model, test_mat)
+  
+  # Extract chronological timestamps for the test set
+  test_timestamps <- object@raw_telemetry$timestamp[(n_train + 1):n_total]
+  
+  results <- data.frame(
+    timestamp = test_timestamps,
+    baseline_score = base_scores,
+    oos_score = oos_scores
+  )
+  
+  # Calculate global fit metric
+  r_sq <- stats::cor(base_scores, oos_scores)^2
+  message(sprintf("Prognostic Evaluation Complete. Out-of-Sample R^2: %.4f", r_sq))
+  
+  return(results)
+}

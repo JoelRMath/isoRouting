@@ -117,8 +117,6 @@ Figure 1A illustrates the exponential sensitivity of the event extraction phase,
 Standard machine learning pipelines output abstract multidimensional centroids that offer no practical value to maintenance technicians. To bridge this gap, \texttt{dynaRchetypes} isolates the exact geometric medoid (the actual recorded event closest to the mathematical center of the cluster) and extracts its surrounding multivariate time-series window via the \texttt{extract\_medoid\_windows()} method.
 
 By applying this to the stable k=4 architecture, we translated the abstract MDTW spatial matrix into four discrete, highly interpretable operational signatures (Figure 2). Rather than overlapping distinct physical units on a single axis, the package's visual matrix isolates each sensor stream horizontally, allowing facility managers to instantly categorize system behavior:   
-JPG
-+ 1
 
 \begin{itemize}
 \item \textbf{Archetype 1 (Abrupt Mechanical Shutdown):} The system exhibits a sudden drop in energy consumption to zero, followed immediately by a rapid decay in both supply and return temperatures, despite a completely flat setpoint. This deterministic signature routes to a mechanical technician to inspect a tripped compressor, blown breaker, or unexpected power loss.
@@ -126,8 +124,6 @@ JPG
 \item \textbf{Archetype 3 (Programmatic Setpoint Setback):} The setpoint is drastically stepped down, causing the system to immediately shed load (energy drops to zero) while temperatures follow a natural thermodynamic decay curve. Like Archetype 2, this is a programmatic behavioral shift, not a fault.
 \item \textbf{Archetype 4 (Uncompensated Thermal Surge):} Despite a completely flat setpoint, supply and return temperatures spike drastically, forcing the system to pull massive energy to compensate. This indicates a sudden failure of the thermal envelope—such as an economizer damper failing open to outside air—routing directly to mechanical controls for inspection.
 \end{itemize}   
-JPG
-+ 3
 
 \begin{figure}[!h]
 \centering
@@ -137,11 +133,26 @@ JPG
 \end{figure}
 
 By partitioning the descriptive context from the algorithmic features, \texttt{dynaRchetypes} successfully converts unsupervised, multidimensional time-series mathematics directly into transparent, actionable maintenance intelligence without requiring labeled training data.
-\section{Impact}
-% Operational and Academic value.
+
+\section{Impact and Operational Best Practices}
+
+The primary impact of \texttt{dynaRchetypes} lies in bridging the historical gap between multidimensional machine learning mathematics and actionable facility management. While traditional predictive maintenance relies on heavily labeled datasets and outputs opaque probability scores, this package offers a fully unsupervised, geometric approach to fault routing.
+
+To achieve successful operational deployment, users must acknowledge that algorithmic clustering is highly sensitive to feature selection and spatial artifacts. The iterative development of this software revealed several critical best practices for diagnostic stability:
+
+\begin{itemize}
+
+\item \textbf{Strict Feature Separation:} The package's decoupled YAML architecture is not merely a convenience; it is a mathematical necessity. Including features with long-duration baseline drift (such as raw accumulated energy) directly in the MDTW calculation can distort the spatial matrix. Users must restrict \texttt{target\_variables} strictly to bounded kinematic indicators (e.g., thermal error, energy derivatives) while reserving cumulative or descriptive metrics for the \texttt{context\_variables} array.
+
+\item \textbf{Visual Parameter Tuning:} Identifying the optimal Isolation Forest threshold requires human-in-the-loop validation. The inclusion of the \texttt{explore\_thresholds()} and \texttt{evaluate\_k\_stability()} helper functions empowers users to map the architectural limits of their specific dataset prior to deployment.
+
+\item \textbf{Understanding Boundary Limits:} As demonstrated in Figure 1, the \texttt{DiagnosticEngine} exhibits absolute structural stability ($k=4$) across a broad operational region (anomaly thresholds 0.60 to 0.69). However, stability rapidly degrades outside this region. If the threshold is set too high ($>0.69$), the anomaly pool starves, leading to erratic cluster fracturing. Conversely, setting the threshold too low introduces operational noise that masks critical structural breaks.
+
+\end{itemize}By providing a highly structured S4 pipeline accompanied by rapid visual helpers, \texttt{dynaRchetypes} shifts the data scientist's focus from writing bespoke distance loops to carefully curating feature spaces and interpreting physical outcomes.
 
 \section{Conclusions}
-% Summary of future elevator pipeline applicability.
+
+\texttt{dynaRchetypes} provides a reproducible, parameter-driven architecture for extracting and clustering multidimensional telemetry faults in HVAC systems. By integrating Isolation Forests with Multivariate Dynamic Time Warping and Divisive Analysis, the software successfully translates months of noisy sensor data into a concise, stable set of operational dispatch queues without requiring labeled training data.The software’s strict separation of mathematical targets from interpretable context ensures that the final outputs are not just mathematically sound, but immediately actionable for facility technicians. Future development will focus on expanding the package's accompanying tutorials and vignettes, providing researchers and engineers with deep-dive documentation on optimal feature selection, artifact purging, and custom threshold calibration for varied industrial control systems.
 
 \bibliographystyle{elsarticle-num}
 \bibliography{references}
