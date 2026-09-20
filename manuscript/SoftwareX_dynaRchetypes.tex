@@ -1,0 +1,149 @@
+\documentclass[final,3p,times]{elsarticle}
+
+\usepackage{amssymb}
+\usepackage{url}
+\usepackage{hyperref}
+
+\journal{SoftwareX}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{dynaRchetypes: An S4-based R engine for the unsupervised extraction of physical fault archetypes in continuous telemetry}
+
+\author[1]{Jo\"{e}l R. Pradines\corref{cor1}}
+\ead{joel.pradines@example.com} % Update with actual email
+\address[1]{[Insert Affiliation/Institution Here]}
+\cortext[cor1]{Corresponding author.}
+
+\begin{abstract}
+The proliferation of Cyber-Physical Systems (CPS) has generated massive volumes of multivariate continuous telemetry. Current anomaly detection methodologies rely heavily on black-box deep learning, which lacks operational interpretability, or static thresholds, which ignore thermodynamic trajectories. We introduce \textit{dynaRchetypes}, an open-source R package that bridges mathematical anomaly isolation with deterministic physical routing. Utilizing a decoupled YAML architecture, the software employs an Isolation Forest to extract structural breaks and a Multivariate Dynamic Time Warping (MDTW) engine to compute spatial trajectories. To prevent micro-cluster bias, the package introduces an automated Product-Weighted Harmonic Pairwise penalty, guaranteeing the unsupervised extraction of interpretable physical fault archetypes without labeled training data.
+\end{abstract}
+
+\begin{keyword}
+Anomaly Detection \sep Multivariate Dynamic Time Warping \sep Unsupervised Clustering \sep Telemetry \sep Cyber-Physical Systems
+\end{keyword}
+
+\end{frontmatter}
+
+\section*{Current code version}
+\begin{table}[!h]
+\begin{tabular}{|l|p{6.5cm}|p{6.5cm}|}
+\hline
+\textbf{Nr.} & \textbf{Code metadata description} & \textbf{Please fill in this column} \\
+\hline
+C1 & Current code version & v0.1.0 \\
+\hline
+C2 & Permanent link to code/repository used for this code version & \url{https://github.com/JoelRMath/dynaRchetypes} \\
+\hline
+C3 & Code Ocean compute capsule & N/A \\
+\hline
+C4 & Legal Code License & MIT License \\
+\hline
+C5 & Code versioning system used & git \\
+\hline
+C6 & Software code languages, tools, and services used & R, YAML, C++ (via isotree) \\
+\hline
+C7 & Compilation requirements, operating environments & R ($\ge$ 4.1.0) \\
+\hline
+C8 & If available, link to developer documentation & \url{https://github.com/JoelRMath/dynaRchetypes/vignettes} \\
+\hline
+C9 & Support email for questions & [Insert Email] \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Motivation and Significance}
+
+The proliferation of Internet of Things (IoT) sensors across Cyber-Physical Systems (CPS)—ranging from industrial robotics and server infrastructure to smart building environments and vertical transportation networks—has generated unprecedented volumes of continuous, multivariate telemetry \cite{cook2019anomaly}. While this data holds immense potential for operational intelligence, extracting deterministic, actionable maintenance states from noisy time-series streams remains a fundamental challenge across engineering domains \cite{blazquez2021review}.
+
+Current anomaly detection methodologies typically fall into two structurally flawed extremes. The first paradigm relies on static, rule-based thresholds. While computationally inexpensive, these rules evaluate telemetry as discrete, point-in-time metrics, completely ignoring the thermodynamic or kinematic trajectories of mechanical failures. This inability to capture dynamic state transitions frequently results in massive alarm fatigue. The second paradigm utilizes deep learning architectures, such as Artificial Neural Networks (ANNs). While mathematically robust at identifying complex multidimensional outliers, ANNs act as uninterpretable black boxes \cite{blazquez2021review}. They require massive, accurately labeled training datasets—which rarely exist in commercial operational environments—and offer virtually no utility for human-in-the-loop decision-making. A neural network may accurately flag a system failure, but it cannot translate that failure into an interpretable physical state to inform a targeted maintenance response. 
+
+There is a critical need for an unsupervised, highly interpretable analytical pipeline that bridges the gap between rapid mathematical anomaly detection and deterministic physical categorization. 
+
+To address this, we introduce \texttt{dynaRchetypes}, an open-source, S4-based R package designed to automate the extraction of interpretable physical fault archetypes from multivariate temporal data. Built as a domain-agnostic engine, the software abstracts feature engineering away from the core mathematics via a decoupled YAML configuration schema. Methodologically, \texttt{dynaRchetypes} synthesizes several established computational pillars: it employs an Isolation Forest for rapid structural break extraction \cite{liu2008isolation}, computes Multivariate Dynamic Time Warping (MDTW) distances to evaluate temporal trajectories independently of phase shifts \cite{shokoohi2017generalizing}, and utilizes Divisive Analysis (DIANA) hierarchical clustering \cite{kaufman2009finding} to parse failure states top-down. Furthermore, to overcome the micro-cluster bias inherent in standard spatial metrics, the package introduces an automated Product-Weighted Harmonic Pairwise silhouette optimization, drawing on principles of harmonic mean aggregation in cluster validation \cite{halkidi2001on}. 
+
+While the architecture is universally applicable to any continuous CPS telemetry stream—from predicting hydraulic faults to elevator kinematics—we demonstrate the software's operational utility in this paper by applying it to a multi-year HVAC dataset, illustrating how \texttt{dynaRchetypes} autonomously routes complex time-series failures into discrete, highly interpretable mechanical dispatch queues.
+
+\section{Software Description}
+
+The \texttt{dynaRchetypes} package is constructed around a strict object-oriented S4 class architecture in R. By encapsulating both the data and the mathematical state within a single \texttt{DiagnosticEngine} object, the software guarantees execution order and mathematical integrity throughout the unsupervised learning pipeline.
+
+\subsection{Software Architecture}
+
+The core architectural philosophy of \texttt{dynaRchetypes} is the complete decoupling of domain-specific feature engineering from the underlying mathematical algorithms. This is achieved via a lightweight YAML configuration schema. Rather than hardcoding mechanical variables (e.g., HVAC supply temperatures or elevator torque derivatives) into the script, users define the \texttt{target\_variables}, dynamic temporal windows, and machine learning hyperparameters (such as \texttt{sample\_size} and \texttt{ntrees}) in a human-readable text file.
+
+The \texttt{DiagnosticEngine} acts as a stateful machine. To prevent runtime errors and ensure analytical validity, the object strictly tracks its progression through six lifecycle states: \texttt{uninitialized}, \texttt{telemetry\_ingested}, \texttt{anomalies\_extracted}, \texttt{distances\_computed}, \texttt{calibrated}, and \texttt{ready\_for\_dispatch}. Methods are locked out if the prerequisite state has not been achieved.
+
+\subsection{Software Functionalities}
+
+The analytical pipeline is executed through five primary S4 methods, which sequentially process continuous telemetry into discrete, actionable dispatch queues:
+
+\begin{enumerate}
+\item \textbf{\texttt{ingest\_telemetry()}:} The engine parses the user-supplied YAML configuration, validates the incoming multivariate dataset against the schema, and locks in the computational feature matrix.
+
+\item \textbf{\texttt{extract\_anomalies()}:} To identify structural breaks in the telemetry, the engine deploys a highly optimized, C++ backed Isolation Forest (via the \texttt{isotree} package). The algorithm assigns a bounded anomaly score to every temporal interval, isolating severe, multidimensional deviations from normal operational states.
+
+\item \textbf{\texttt{compute\_distances()}:} Rather than evaluating anomalies as isolated points, the engine extracts a dynamic multivariate time-series window (e.g., $\pm 2$ hours) around each event. It computes a symmetric, $O(N^2)$ Multivariate Dynamic Time Warping (MDTW) distance matrix. This phase aligns the physical trajectories of the system (how variables degrade over time) regardless of local phase shifts or exact temporal onset.
+
+\item \textbf{\texttt{calibrate()}:} This method represents the mathematical capstone of the engine. It ingests the MDTW matrix and constructs a top-down Divisive Analysis (DIANA) hierarchical clustering tree. To determine the optimal number of physical fault states ($k$), the engine iterates through possible cuts. Standard spatial metrics (like global silhouette width) frequently suffer from micro-cluster bias, mathematically favoring the isolation of a single extreme outlier. To counteract this, \texttt{calibrate()} introduces a novel \textit{Product-Weighted Harmonic Pairwise Silhouette} metric. By weighting pairwise cluster comparisons by the product of their sizes and computing the harmonic mean, the engine heavily penalizes the formation of microscopic edge-cases, mathematically forcing the extraction of macroscopic, operationally viable physical states.
+
+\item \textbf{\texttt{commit\_queues()}:} Based on the calibration step's optimum $k$ (or a user-supplied override), the engine executes the final tree cut. It outputs the finalized dispatch ledger—appending a discrete operational queue assignment to every extracted anomaly. Finally, it isolates the geometric medoid of each cluster (the specific event minimizing the sum of intra-cluster MDTW distances), surfacing the purest physical signature of that archetype for human-in-the-loop review.
+\end{enumerate}
+
+\section{Illustrative Examples}
+
+To demonstrate the operational utility and stability of the \texttt{DiagnosticEngine}, we applied \texttt{dynaRchetypes} to a multi-year multivariate telemetry dataset generated by a commercial Heating, Ventilation, and Air Conditioning (HVAC) system in Turin, Italy. The dataset consists of over 31,000 continuous 15-minute intervals.
+
+Leveraging the package's decoupled YAML architecture, we partitioned the variables into mathematical targets for the MDTW algorithm (\texttt{temp\_error}, \texttt{delta\_t}, \texttt{energy}, \texttt{energy\_deriv\_15m}, \texttt{delta\_t\_deriv\_15m}) and descriptive context variables for human interpretation (\texttt{t\_supply}, \texttt{t\_return}, \texttt{sp\_return}). The pipeline was configured with a 2.0-hour temporal window to capture the full trajectory of physical state changes.
+
+\subsection{Event Extraction and Cluster Stability}
+
+The first phase of the pipeline isolated structural breaks using the integrated Isolation Forest. Because anomaly scores are highly sensitive to feature space dimensions, we utilized the package's \texttt{explore\_thresholds()} and \texttt{evaluate\_k\_stability()} helper functions to map the mathematical behavior of the system prior to operational deployment.
+
+Figure 1A illustrates the exponential sensitivity of the event extraction phase, demonstrating how the number of isolated anomalies decays as the threshold approaches the strict upper boundary of the dataset. To determine the optimal number of physical fault states (k), we evaluated the clustering architecture across a stable anomaly pool boundary (Thresholds 0.65 to 0.70). Figure 1B reveals a critical divergence between validation metrics. The custom Harmonic Pairwise metric proved highly sensitive to edge cases, violently fracturing and recombining sub-clusters (k ranging from 6 to 10) as new anomalies entered the pool. In contrast, the Global Silhouette metric functioned as a robust macro-router, maintaining an absolute, stable structural architecture of k=4 across the entire operational range. For facility dispatch systems where queue stability is paramount, this macroscopic baseline is optimal.   
+
+
+\begin{figure}[!h]
+\centering
+\includegraphics[width=\textwidth]{figures/fig1_threshold_stability.pdf}
+\caption{A) The exponential decay of extracted anomalies across Isolation Forest thresholds. B) Cluster architecture stability, demonstrating the robust k=4 macro-routing of the Global Silhouette metric against the hyper-sensitive Harmonic Pairwise penalty.}
+\label{fig:stability}
+\end{figure}
+
+\subsection{Interpretable Dispatch Routing}
+
+Standard machine learning pipelines output abstract multidimensional centroids that offer no practical value to maintenance technicians. To bridge this gap, \texttt{dynaRchetypes} isolates the exact geometric medoid (the actual recorded event closest to the mathematical center of the cluster) and extracts its surrounding multivariate time-series window via the \texttt{extract\_medoid\_windows()} method.
+
+By applying this to the stable k=4 architecture, we translated the abstract MDTW spatial matrix into four discrete, highly interpretable operational signatures (Figure 2). Rather than overlapping distinct physical units on a single axis, the package's visual matrix isolates each sensor stream horizontally, allowing facility managers to instantly categorize system behavior:   
+JPG
++ 1
+
+\begin{itemize}
+\item \textbf{Archetype 1 (Abrupt Mechanical Shutdown):} The system exhibits a sudden drop in energy consumption to zero, followed immediately by a rapid decay in both supply and return temperatures, despite a completely flat setpoint. This deterministic signature routes to a mechanical technician to inspect a tripped compressor, blown breaker, or unexpected power loss.
+\item \textbf{Archetype 2 (Setpoint-Induced Load Surge):} A programmatic or manual increase in the setpoint instantaneously triggers a massive, sustained spike in energy consumption as the system works to raise the supply and return temperatures. This represents normal, albeit aggressive, operational load rather than a mechanical failure.
+\item \textbf{Archetype 3 (Programmatic Setpoint Setback):} The setpoint is drastically stepped down, causing the system to immediately shed load (energy drops to zero) while temperatures follow a natural thermodynamic decay curve. Like Archetype 2, this is a programmatic behavioral shift, not a fault.
+\item \textbf{Archetype 4 (Uncompensated Thermal Surge):} Despite a completely flat setpoint, supply and return temperatures spike drastically, forcing the system to pull massive energy to compensate. This indicates a sudden failure of the thermal envelope—such as an economizer damper failing open to outside air—routing directly to mechanical controls for inspection.
+\end{itemize}   
+JPG
++ 3
+
+\begin{figure}[!h]
+\centering
+\includegraphics[width=\textwidth]{figures/fig2_vertical_matrix.pdf}
+\caption{Multivariate trajectories of the four extracted geometric medoids. The visualization leverages the YAML schema to separate human-interpretable context (top three rows) from the algorithmic features used in the MDTW clustering (bottom four rows).}
+\label{fig:medoids}
+\end{figure}
+
+By partitioning the descriptive context from the algorithmic features, \texttt{dynaRchetypes} successfully converts unsupervised, multidimensional time-series mathematics directly into transparent, actionable maintenance intelligence without requiring labeled training data.
+\section{Impact}
+% Operational and Academic value.
+
+\section{Conclusions}
+% Summary of future elevator pipeline applicability.
+
+\bibliographystyle{elsarticle-num}
+\bibliography{references}
+
+\end{document}
