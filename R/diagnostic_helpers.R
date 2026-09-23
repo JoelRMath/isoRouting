@@ -1,10 +1,14 @@
-
 #' @title Explore Anomaly Thresholds
 #' @description Rapidly scores the feature space and returns a mapping of 
 #' anomaly thresholds to the number of extracted events.
 #' @export
-explore_thresholds <- function(object, thresholds = seq(0.50, 0.80, by = 0.01), ntrees = 500, sample_size = 256) {
+explore_thresholds <- function(object, thresholds = seq(0.50, 0.80, by = 0.01), ntrees = NULL, sample_size = NULL) {
   if (object@domain_state == "uninitialized") stop("Telemetry must be ingested.")
+  
+  # Inherit from YAML if not manually provided
+  hyps <- get_hyperparameters(object)
+  if (is.null(ntrees)) ntrees <- ifelse(is.null(hyps$ntrees), 500, hyps$ntrees)
+  if (is.null(sample_size)) sample_size <- ifelse(is.null(hyps$sample_size), 256, hyps$sample_size)
   
   message("Scoring feature space to build threshold curve...")
   set.seed(42)
@@ -87,11 +91,15 @@ extract_medoid_windows <- function(object, k) {
   }
   
   medoids <- object@medoids[[k_char]]
-  window <- object@feature_schema$temporal_window_hours
+  
+  # Fetch parameters using getters to respect encapsulation
+  hyps <- get_hyperparameters(object)
+  window <- hyps$temporal_window_hours
   if (is.null(window)) window <- 2
   
-  targets <- object@feature_schema$target_variables
-  contexts <- object@feature_schema$context_variables
+  feats <- get_features(object)
+  targets <- feats$target_variables
+  contexts <- feats$context_variables
   if (is.null(contexts)) contexts <- character(0)
   
   # Combine and deduplicate in case a variable is used as both context and target
@@ -256,4 +264,58 @@ evaluate_prognostic_drift <- function(object,
   message(sprintf("Prognostic Evaluation Complete. Out-of-Sample R^2: %.4f", r_sq))
   
   return(results)
+}
+
+#' @title Explain Anomaly Feature Importance
+#' @description Conducts Explainable AI (XAI) feature attribution on a specific anomaly,
+#' calculating Operational Robust Z-Scores and algorithmic Score Ablation Drops.
+#' @param object A DiagnosticEngine object with ingested telemetry.
+#' @param iso_model A trained isotree::isolation.forest model.
+#' @param target_idx Numeric. The row index of the anomaly to explain.
+#' @return A data.frame containing Z-Scores and Ablation Drops for all variables.
+#' @export
+explain_anomaly <- function(object, iso_model, target_idx) {
+  if (object@domain_state == "uninitialized") {
+    stop("Telemetry must be ingested to extract features for explanation.")
+  }
+  
+  baseline_matrix <- object@feature_matrix
+  
+  # 1. Global baseline statistics
+  global_medians <- apply(baseline_matrix, 2, median, na.rm = TRUE)
+  global_mads <- apply(baseline_matrix, 2, mad, na.rm = TRUE)
+  global_mads[global_mads == 0] <- 1e-6 # Prevent zero-division
+  
+  # 2. Extract target row and base score
+  target_row <- baseline_matrix[target_idx, , drop = FALSE]
+  base_score <- stats::predict(iso_model, target_row)
+  
+  # 3. Compute Robust Z-Scores
+  z_scores <- abs(target_row[1, ] - global_medians) / global_mads
+  
+  # 4. Compute Algorithmic Ablation Drops
+  ablation_drops <- numeric(ncol(baseline_matrix))
+  names(ablation_drops) <- colnames(baseline_matrix)
+  
+  for (var in names(ablation_drops)) {
+    ablated_row <- target_row
+    ablated_row[1, var] <- global_medians[var]
+    new_score <- stats::predict(iso_model, ablated_row)
+    ablation_drops[var] <- base_score - new_score
+  }
+  
+  # 5. Compile comprehensive results
+  df_explain <- data.frame(
+    Variable = names(ablation_drops),
+    Original_Value = as.numeric(target_row[1, ]),
+    Global_Median = as.numeric(global_medians),
+    Robust_Z_Score = as.numeric(z_scores),
+    Ablation_Drop = as.numeric(ablation_drops)
+  )
+  
+  # Sort by Ablation Drop (highest impact first)
+  df_explain <- df_explain[order(-df_explain$Ablation_Drop), ]
+  rownames(df_explain) <- NULL
+  
+  return(df_explain)
 }

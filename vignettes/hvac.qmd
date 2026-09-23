@@ -2,6 +2,8 @@
 title: "Prescriptive Analytics in Property Management: An Example with HVAC Telemetry"
 author: "Joël R. Pradines, Ph.D."
 date: today
+execute:
+  dir: project
 format:
   html:
     toc: true
@@ -43,7 +45,7 @@ library(here)
 library(janitor)
 
 # 1. Read and clean the data
-hvac_data <- read_csv(here("data", "Turin", "HVAC_NE_EC_19-21.csv")) %>%
+hvac_data <- read_csv(here("../HVAC/data/Turin/HVAC_NE_EC_19-21.csv")) %>%
   clean_names()
 
 # 2. Clean the timestamp and extract a subset
@@ -71,7 +73,7 @@ library(here)
 library(janitor)
 
 # 1. Read and clean the data
-hvac_data <- read_csv(here("data", "Turin", "HVAC_NE_EC_19-21.csv")) %>%
+hvac_data <- read_csv(here("../HVAC/data/Turin/HVAC_NE_EC_19-21.csv")) %>%
   clean_names()
 
 # 2. Clean the timestamp and extract a subset

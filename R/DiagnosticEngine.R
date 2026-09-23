@@ -8,6 +8,7 @@
 #'
 #' @slot config_path character. Path to the YAML configuration file.
 #' @slot feature_schema list. Parsed rules for dynamic feature engineering.
+#' @slot hyperparameters list. Machine learning tuning parameters (thresholds, ntrees).
 #' @slot domain_state character. Current lifecycle state of the engine.
 #' @slot raw_telemetry data.frame. The base ingested dataset.
 #' @slot feature_matrix data.frame. Data after applying YAML mutations.
@@ -26,6 +27,7 @@ setClass(
   slots = list(
     config_path = "character",
     feature_schema = "list",
+    hyperparameters = "list",
     domain_state = "character",
     raw_telemetry = "data.frame",
     feature_matrix = "data.frame",
@@ -53,6 +55,18 @@ setClass(
 )
 
 # --- ENGINE API (GENERICS) ---
+
+#' @title Get Engine Hyperparameters
+#' @description Returns the machine learning parameters parsed from the configuration.
+#' @param object A DiagnosticEngine object.
+#' @export
+setGeneric("get_hyperparameters", function(object) standardGeneric("get_hyperparameters"))
+
+#' @title Get Feature Schema
+#' @description Returns the target and context variables defined for the engine.
+#' @param object A DiagnosticEngine object.
+#' @export
+setGeneric("get_features", function(object) standardGeneric("get_features"))
 
 #' @title Ingest and Engineer Telemetry
 #' @description Ingests raw telemetry and dynamically applies feature engineering 
@@ -118,19 +132,46 @@ setMethod("initialize", "DiagnosticEngine", function(.Object, config_path, ...) 
     }
     
     # 2. Assign the path and parse the schema
+    raw_yaml <- yaml::read_yaml(config_path)
     .Object@config_path <- config_path
-    .Object@feature_schema <- yaml::read_yaml(config_path)
     
-    # 3. Advance the domain state
+    # 3. Cleanly separate data schema from ML hyperparameters
+    .Object@feature_schema <- list(
+      target_variables = raw_yaml$target_variables,
+      context_variables = raw_yaml$context_variables
+    )
+    
+    .Object@hyperparameters <- list(
+      anomaly_threshold = raw_yaml$anomaly_threshold,
+      temporal_window_hours = raw_yaml$temporal_window_hours,
+      sample_size = raw_yaml$sample_size,
+      ntrees = raw_yaml$ntrees
+    )
+    
+    # 4. Advance the domain state
     .Object@domain_state <- "initialized"
     
     message(sprintf("DiagnosticEngine initialized. Schema loaded from: %s", basename(config_path)))
   }
   
-  # 4. Standard S4 inheritance passthrough
+  # 5. Standard S4 inheritance passthrough
   .Object <- callNextMethod(.Object, ...)
   return(.Object)
 })
+
+# --- ACCESSORS ---
+
+#' @export
+setMethod("get_hyperparameters", "DiagnosticEngine", function(object) {
+  return(object@hyperparameters)
+})
+
+#' @export
+setMethod("get_features", "DiagnosticEngine", function(object) {
+  return(object@feature_schema)
+})
+
+# --- CORE METHODS ---
 
 #' @export
 setMethod("ingest_telemetry", "DiagnosticEngine", function(object, data) {
@@ -174,7 +215,7 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   
   # 2. Fallback to YAML config if threshold is not provided manually
   if (missing(threshold)) {
-    threshold <- object@feature_schema$anomaly_threshold
+    threshold <- object@hyperparameters$anomaly_threshold
     if (is.null(threshold)) {
       warning("Threshold not provided in arguments or YAML. Defaulting to 0.60.")
       threshold <- 0.60
@@ -182,10 +223,10 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   }
   
   # 2.5 Fetch ML Hyperparameters from YAML
-  sample_size <- object@feature_schema$sample_size
+  sample_size <- object@hyperparameters$sample_size
   if (is.null(sample_size)) sample_size <- 256
   
-  ntrees <- object@feature_schema$ntrees
+  ntrees <- object@hyperparameters$ntrees
   if (is.null(ntrees)) ntrees <- 500
   
   # 3. Train Isolation Forest and Score Space
@@ -204,7 +245,6 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   scores <- stats::predict(iso_model, object@feature_matrix)
   
   # 4. Bind and Filter
-  # We bind to raw_telemetry to ensure timestamps and external IDs are preserved
   scored_data <- object@raw_telemetry
   scored_data$anomaly_score <- scores
   
@@ -229,7 +269,7 @@ setMethod("compute_distances", "DiagnosticEngine", function(object) {
   n_events <- nrow(object@anomalies)
   
   # Fetch dynamic window from YAML
-  window_hours <- object@feature_schema$temporal_window_hours
+  window_hours <- object@hyperparameters$temporal_window_hours
   if (is.null(window_hours)) {
     warning("YAML missing 'temporal_window_hours'. Defaulting to 2.")
     window_hours <- 2
