@@ -2,3 +2,6 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
 ^manuscript$
+^_pkgdown\.yml$
+^docs$
+^pkgdown$

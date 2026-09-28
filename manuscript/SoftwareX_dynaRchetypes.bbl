@@ -24,12 +24,4 @@ M.~Shokoohi-Yekta, B.~Hu, H.~Jin, J.~Wang, E.~Keogh, Generalizing dtw to the
   multi-dimensional case requires an adaptive approach, Data mining and
   knowledge discovery 31~(1) (2017) 1--31.
 
-\bibitem{kaufman2009finding}
-L.~Kaufman, P.~J. Rousseeuw, Finding groups in data: an introduction to cluster
-  analysis, John Wiley \& Sons, 2009.
-
-\bibitem{halkidi2001on}
-M.~Halkidi, Y.~Batistakis, M.~Vazirgiannis, On validation methods for cluster
-  analysis, Journal of Intelligent Information Systems 17 (2001) 107--145.
-
 \end{thebibliography}

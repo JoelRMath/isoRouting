@@ -7,8 +7,8 @@
 explore_thresholds(
   object,
   thresholds = seq(0.5, 0.8, by = 0.01),
-  ntrees = 500,
-  sample_size = 256
+  ntrees = NULL,
+  sample_size = NULL
 )
 }
 \description{

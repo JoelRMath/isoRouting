@@ -17,6 +17,8 @@ operational routing queues using edge-weighted harmonic pairwise penalties.
 
 \item{\code{feature_schema}}{list. Parsed rules for dynamic feature engineering.}
 
+\item{\code{hyperparameters}}{list. Machine learning tuning parameters (thresholds, ntrees).}
+
 \item{\code{domain_state}}{character. Current lifecycle state of the engine.}
 
 \item{\code{raw_telemetry}}{data.frame. The base ingested dataset.}

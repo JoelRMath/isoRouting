@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) (preloaded format=pdflatex 2023.4.15)  20 SEP 2026 15:45
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) (preloaded format=pdflatex 2023.4.15)  27 SEP 2026 20:40
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -748,45 +748,56 @@ Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 
 {/usr/local/texlive/2023/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/loc
 al/texlive/2023/texmf-dist/fonts/enc/dvips/base/8r.enc}]
+Overfull \hbox (22.23883pt too wide) in paragraph at lines 67--68
+[]\OT1/txr/m/n/10 The \OT1/cmtt/m/n/10 dynaRchetypes \OT1/txr/m/n/10 pack-age i
+s con-structed around a strict object-oriented S4 class ar-chi-tec-ture (\OT1/c
+mtt/m/n/10 DiagnosticEngine\OT1/txr/m/n/10 ).
+ []
+
+
+Overfull \hbox (10.23871pt too wide) in paragraph at lines 70--71
+\OT1/txr/m/n/10 hy-per-pa-ram-e-ters. This is achieved via a lightweight YAML c
+on-fig-u-ra-tion. Users de-fine de-scrip-tive \OT1/cmtt/m/n/10 context[]variabl
+es
+ []
+
+
+Overfull \hbox (80.35765pt too wide) in paragraph at lines 70--71
+\OT1/txr/m/n/10 and kine-matic \OT1/cmtt/m/n/10 target[]variables \OT1/txr/m/n/
+10 in-de-pen-dently from al-go-rith-mic pa-ram-e-ters such as \OT1/cmtt/m/n/10 
+anomaly[]threshold\OT1/txr/m/n/10 , \OT1/cmtt/m/n/10 temporal[]window[]hours\OT
+1/txr/m/n/10 ,
+ []
+
+
+Overfull \hbox (16.87859pt too wide) in paragraph at lines 70--71
+\OT1/txr/m/n/10 and \OT1/cmtt/m/n/10 ntrees\OT1/txr/m/n/10 . The en-gine tracks
+ its pro-gres-sion through locked life-cy-cle states (e.g., \OT1/cmtt/m/n/10 te
+lemetry[]ingested\OT1/txr/m/n/10 , \OT1/cmtt/m/n/10 calibrated\OT1/txr/m/n/10 )
+,
+ []
+
 LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <10> not available
-(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 84.
- [2]
-<figures/fig1_threshold_stability.pdf, id=78, 867.24pt x 722.7pt>
-File: figures/fig1_threshold_stability.pdf Graphic file (type pdf)
-<use figures/fig1_threshold_stability.pdf>
-Package pdftex.def Info: figures/fig1_threshold_stability.pdf  used on input li
-ne 110.
-(pdftex.def)             Requested size: 468.0pt x 389.99855pt.
-
-
-LaTeX Warning: `!h' float specifier changed to `!ht'.
-
-[3]
+(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 75.
+[2]
 LaTeX Font Info:    Trying to load font information for TS1+txr on input line 1
-22.
+01.
  (/usr/local/texlive/2023/texmf-dist/tex/latex/txfonts/ts1txr.fd
 File: ts1txr.fd 2000/12/15 v3.1
-) [4 <./figures/fig1_threshold_stability.pdf>]
-<figures/fig2_vertical_matrix.pdf, id=102, 794.97pt x 794.97pt>
-File: figures/fig2_vertical_matrix.pdf Graphic file (type pdf)
-<use figures/fig2_vertical_matrix.pdf>
-Package pdftex.def Info: figures/fig2_vertical_matrix.pdf  used on input line 1
-30.
-(pdftex.def)             Requested size: 468.0pt x 468.0093pt.
- [5 <./figures/fig2_vertical_matrix.pdf>]
-(./SoftwareX_dynaRchetypes.bbl) [6] (./SoftwareX_dynaRchetypes.aux)
+) [3]
+(./SoftwareX_dynaRchetypes.bbl) [4] (./SoftwareX_dynaRchetypes.aux)
 Package rerunfilecheck Info: File `SoftwareX_dynaRchetypes.out' has not changed
 .
-(rerunfilecheck)             Checksum: 9011C323EA9A7D54535760AA7A34666C;1636.
+(rerunfilecheck)             Checksum: 87B02999CDEE0D50A88CEFFF01C68E4A;2230.
  ) 
 Here is how much of TeX's memory you used:
- 11130 strings out of 476025
- 171280 string characters out of 5790017
+ 11105 strings out of 476025
+ 170519 string characters out of 5790017
  1869388 words of memory out of 5000000
- 31380 multiletter control sequences out of 15000+600000
+ 31361 multiletter control sequences out of 15000+600000
  541834 words of font info for 105 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,11n,76p,1157b,518s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,11n,76p,1408b,438s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2023/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb
 ></usr/local/texlive/2023/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt8.pfb><
 /usr/local/texlive/2023/texmf-dist/fonts/type1/public/txfonts/rtcxr.pfb></usr/l
@@ -797,10 +808,10 @@ xmf-dist/fonts/type1/public/txfonts/txsy.pfb></usr/local/texlive/2023/texmf-dis
 t/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2023/texmf-dist/fonts/ty
 pe1/urw/times/utmr8a.pfb></usr/local/texlive/2023/texmf-dist/fonts/type1/urw/ti
 mes/utmri8a.pfb>
-Output written on SoftwareX_dynaRchetypes.pdf (6 pages, 126593 bytes).
+Output written on SoftwareX_dynaRchetypes.pdf (4 pages, 100233 bytes).
 PDF statistics:
- 176 PDF objects out of 1000 (max. 8388607)
- 142 compressed objects within 2 object streams
- 33 named destinations out of 1000 (max. 500000)
- 83 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 149 PDF objects out of 1000 (max. 8388607)
+ 121 compressed objects within 2 object streams
+ 30 named destinations out of 1000 (max. 500000)
+ 89 words of extra memory for PDF output out of 10000 (max. 10000000)
 
