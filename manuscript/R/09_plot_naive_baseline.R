@@ -31,7 +31,8 @@ anomaly_scores <- stats::predict(iso_model, engine@feature_matrix)
 # -----------------------------------------------------------------------------
 message("Executing Naive Threshold Sweep. This will take a moment...")
 # Lowered the sweep window to capture the depressed anomaly scores
-threshold_seq <- seq(0.57, 0.65, by = 0.005) 
+#threshold_seq <- seq(0.57, 0.65, by = 0.005) 
+threshold_seq <- seq(0.6, 0.65, by = 0.005) 
 results_sweep <- list()
 
 for (th in threshold_seq) {
@@ -74,8 +75,8 @@ p_sweep <- ggplot(df_sweep, aes(x = Threshold, y = Opt_k_Silhouette)) +
   theme_bw(base_size = 12) +
   theme(panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"))
 
-ggsave("manuscript/figures/fig9a_naive_stability.pdf", plot = p_sweep, width = 8, height = 4, device = "pdf")
-ggsave("manuscript/figures/fig9a_naive_stability.png", plot = p_sweep, width = 8, height = 4, device = "png")
+ggsave("manuscript/figures/fig9a_naive_stability_new.pdf", plot = p_sweep, width = 8, height = 4, device = "pdf")
+ggsave("manuscript/figures/fig9a_naive_stability_new.png", plot = p_sweep, width = 8, height = 4, device = "png")
 
 # -----------------------------------------------------------------------------
 # 3. DYNAMIC MEDOID EXTRACTION

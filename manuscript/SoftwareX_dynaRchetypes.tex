@@ -56,41 +56,93 @@ C9 & Support email for questions & [Insert Email] \\
 
 \section{Motivation and Significance}
 
-The proliferation of Internet of Things (IoT) sensors across Cyber-Physical Systems (CPS)—ranging from industrial robotics to HVAC infrastructure—generates unprecedented volumes of continuous multivariate telemetry \cite{cook2019anomaly}. Extracting deterministic, actionable maintenance states from these noisy time-series streams presents a compelling, high-value challenge in operations research.
+The proliferation of Internet of Things (IoT) sensors across Cyber-Physical Systems (CPS)—ranging from industrial robotics to HVAC infrastructure—generates unprecedented volumes of continuous multivariate telemetry \cite{cook2019anomaly}. Extracting actionable maintenance states from these noisy time-series streams is a high-value challenge in operations research.
 
-Current anomaly detection methodologies generally present a tradeoff between two predominant paradigms. Static, rule-based thresholds are computationally efficient and transparent, yet they struggle to capture kinematic fault trajectories and often yield elevated false-positive rates under seasonal concept drift. Conversely, deep learning architectures, such as Artificial Neural Networks (ANNs), offer robust multidimensional detection but suffer from inherent opacity \cite{blazquez2021review}. This lack of interpretability complicates human-in-the-loop triage; while an ANN may accurately flag a mathematical deviation, translating that anomaly into an actionable physical maintenance state remains a significant challenge.
+Current anomaly detection methodologies generally fall into two main categories. Static, rule-based thresholds are computationally efficient and transparent, yet they struggle to capture kinematic fault trajectories and often yield elevated false-positive rates caused by seasonal drift. Conversely, Artificial Neural Networks (ANNs) offer robust multidimensional detection but act as "black boxes," meaning their internal decision-making processes are hidden from the operator \cite{blazquez2021review}. This lack of interpretability complicates human-in-the-loop triage; while an ANN may accurately flag a mathematical deviation, translating that anomaly into an actionable physical maintenance state remains a challenge.
 
-To bridge the operational gap between rigid static rules and opaque predictive models, we introduce \texttt{dynaRchetypes}, an open-source, S4-based R package designed to automate the extraction of physical fault archetypes. Built as a domain-agnostic engine, the software abstracts feature engineering away from the core mathematics via a decoupled YAML configuration schema. Methodologically, it synthesizes an Isolation Forest for structural break extraction \cite{liu2008isolation} with Multivariate Dynamic Time Warping (MDTW) distances \cite{shokoohi2017generalizing} to group anomalies by their temporal trajectory rather than static spatial proximity. By extracting the geometric medoid of each cluster, the software isolates a representative real-world temporal window, enabling direct visualization and human interpretation of the specific fault type. Furthermore, algorithmic ablation provides explicit feature attribution to identify the specific sensors driving each fault. Paired with contiguous out-of-sample drift evaluation to confirm prognostic stability, \texttt{dynaRchetypes} ensures that the extracted operational signatures remain robust and actionable for targeted maintenance triage.
+To bridge the gap between static rules and black-box fault-detection models, we introduce \texttt{dynaRchetypes}, an open-source, S4-based R package designed to automate the extraction of physical fault archetypes. Built as a domain-agnostic engine, the software utilizes a YAML configuration schema to ingest user-defined features, keeping domain-specific logic separate from the core mathematical pipeline. Methodologically, it combines the generation of an Isolation Forest for fault extraction \cite{liu2008isolation} with Multivariate Dynamic Time Warping (MDTW) distances \cite{shokoohi2017generalizing} to group anomalies by their temporal trajectory rather than static spatial proximity. By extracting the geometric medoid of each cluster, the software isolates a representative temporal window, enabling direct visualization and interpretation of the specific fault type. Furthermore, algorithmic ablation provides explicit feature attribution to identify the sensors driving each fault.
 
 \section{Software Description}
 
-To operationalize its diagnostic pipeline, \texttt{dynaRchetypes} utilizes a stateful, object-oriented framework to manage the mathematical progression from feature extraction to temporal clustering.
+\texttt{dynaRchetypes} utilizes an object-oriented framework to manage the mathematical progression from feature extraction to temporal clustering.
 
 \subsection{Decoupled Architecture}
 
-The core architectural philosophy is the strict separation of domain-specific feature schema from machine learning hyperparameters. This is achieved via a lightweight YAML configuration. Users define descriptive \texttt{context\_variables} and kinematic \texttt{target\_variables} independently from algorithmic parameters such as \texttt{anomaly\_threshold}, \texttt{temporal\_window\_hours}, and \texttt{ntrees}. The engine tracks its progression through locked lifecycle states (e.g., \texttt{telemetry\_ingested}, \texttt{calibrated}), preventing runtime violations.
+A YAML configuration file allows the user to define both the domain-specific feature schema (e.g., \texttt{context\_variables} and \texttt{target\_variables}) and the machine learning hyperparameters (e.g., \texttt{anomaly\_threshold}, \texttt{temporal\_window\_hours}, and \texttt{ntrees}). Internally, the engine tracks its progression through lifecycle states (such as \texttt{telemetry\_ingested} and \texttt{calibrated}) to ensure the diagnostic pipeline executes in the correct sequence, preventing the user from calling downstream steps—such as clustering—before the model is calibrated.
 
 \subsection{Software Functionalities}
 The pipeline is executed through six primary methods:
 \begin{enumerate}
 \item \textbf{\texttt{ingest\_telemetry()}:} Parses the YAML schema, validates incoming datasets, and locks the computational feature matrix.
-\item \textbf{\texttt{extract\_anomalies()}:} Deploys a C++ backed Isolation Forest to assign bounded anomaly scores to temporal intervals, extracting multidimensional structural breaks.
-\item \textbf{\texttt{compute\_distances()}:} Extracts a dynamic multivariate time-series window (e.g., $\pm 2$ hours) around each anomaly and computes a symmetric MDTW distance matrix, capturing system kinematics independent of phase shifts.
-\item \textbf{\texttt{calibrate()}:} Ingests the MDTW matrix to construct a Divisive Analysis (DIANA) tree. Evaluates structural integrity across $k$ configurations using custom macro-routing metrics to prevent micro-cluster bias.
-\item \textbf{\texttt{commit\_queues()}:} Locks in the finalized operational queue assignments and extracts the geometric medoid (the purest physical signature) of each archetype for plotting.
-\item \textbf{\texttt{explain\_anomaly()}:} A built-in Explainable AI (XAI) module that calculates Robust Z-Scores and Algorithmic Ablation Drops, allowing human operators to identify the precise physical sensors that triggered a structural break.
+\item \textbf{\texttt{extract\_anomalies()}:} Calls a C++ backed Isolation Forest to evaluate the time-series data and identify time points with high anomaly scores.
+\item \textbf{\texttt{compute\_distances()}:} Extracts a multivariate time-series window (e.g., $\pm 2$ hours) around each anomaly and computes a symmetric MDTW distance matrix.
+\item \textbf{\texttt{calibrate()}:} Uses the MDTW matrix to build a Divisive Analysis (DIANA) tree. It then evaluates different cluster counts ($k$) to determine the optimal number of fault groupings, using metrics designed to prevent the formation of overly small, fragmented clusters.
+\item \textbf{\texttt{commit\_queues()}:} Assigns anomalies to the optimal clusters identified during calibration and extracts the geometric medoid to provide the most representative variable dynamics of each cluster for plotting.
+\item \textbf{\texttt{explain\_anomaly()}:} Calculates Z-scores and algorithmic ablation drops, allowing the user to rank sensors for their contribution to an anomaly.
 \end{enumerate}
 
-\section{Methodology and Operational Validation}
 
-To demonstrate the operational utility and stability of the \texttt{DiagnosticEngine}, we applied the software to a multi-year HVAC telemetry dataset (Turin, Italy) containing 31,000 continuous 15-minute intervals. 
+\section{Feature Selection and the Case for Isolation Forests}
 
-\subsection{The Linear Illusion and Implicit Causal Encoding}
-A fundamental challenge in diagnosing CPS is mapping causal dependencies between thermodynamic variables. Standard statistical approaches assume linear collinearity. For example, a correlation heatmap of the dataset suggests a moderate linear relationship ($r = 0.61$) between supply temperature (\texttt{t\_supply}) and saturation temperature (\texttt{t\_saturation}). However, visual exploratory data analysis (EDA) via a pairwise scatterplot matrix shatters this illusion. The interaction forms stacked, parallel geometric bands representing discrete, non-linear thermodynamic "gears" (e.g., compressor staging). 
+To provide practical examples of usage and outline a standard workflow, we applied the \texttt{DiagnosticEngine} to a multi-year HVAC telemetry dataset (Turin, Italy) containing 31,000 continuous 15-minute intervals \cite{borda2022development}.
 
-Attempting to explicitly model these multi-modal dependencies via exhaustive pairwise residuals inflates the feature space with collinear noise. This combinatorial explosion severely dilutes the probability of isolating true structural breaks. Furthermore, passing an uncurated, high-dimensional matrix into the downstream MDTW engine degrades its spatial distance metrics, washing out the signature of acute sensor faults. 
+When selecting features for anomaly detection, managing correlated variables is critical. Feeding highly correlated data into general anomaly detection models—particularly distance-based algorithms—can distort feature weights and obscure genuine faults. Therefore, a standard initial step is to examine the linear correlation between variables. As illustrated in the correlation heatmap (Figure \ref{fig:correlation}), the Turin dataset exhibits numerous interdependencies, with several pairs of variables demonstrating high linear correlation.
 
-Instead, \texttt{dynaRchetypes} utilizes the Isolation Forest (IF) for topological sparsity detection. Guided by the Manifold Hypothesis, physical laws constrain normal operational data to a dense, lower-dimensional manifold. When a mechanical fault occurs (broken causality), the telemetry "falls off" this manifold into sparse space. IF isolates anomalies via random orthogonal hyperplanes rather than spatial distance calculations, implicitly encoding multivariate causal dependencies without succumbing to spatial distance degradation or requiring explicit parametric models.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/fig_01_correlation_heatmap.png}
+    \caption{Global Pearson correlation heatmap for the Turin HVAC dataset, highlighting high linear correlation across multiple variable pairs.}
+    \label{fig:correlation}
+\end{figure}
+
+A standard approach to handling high correlation is to reduce the dataset to a subset of minimally correlated variables. However, the Pearson correlation coefficient is an oversimplification that focuses on linear relationships. Visualizing the dataset via a pairwise scatterplot matrix (Figure \ref{fig:scatterplots}) reveals that the actual dependencies between these thermodynamic variables exist regardless of their linear correlation summaries. Instead of simple linear trends, the scatterplots display complex interactions, including distinct data clouds and stacked, parallel bands that correspond to discrete mechanical states.
+
+Attempting to explicitly model these multi-modal dependencies to incorporate causality into a traditional fault-detection model is highly impractical. Manually engineering features to account for these interactions is tedious and it would cause a quadratic increase in the number of variables. 
+
+Instead, \texttt{dynaRchetypes} relies on a multidimensional geometric interpretation of the data. Normal physical operations and machinery dependencies naturally constrain the telemetry, forming dense manifolds---or clouds of points---within the 11-dimensional feature space. When a mechanical fault occurs, this physical causality breaks, causing the resulting telemetry to fall outside these dense regions. The Isolation Forest algorithm is uniquely appropriate for this environment; because it isolates anomalies using random orthogonal hyperplanes rather than traditional distance calculations, it identifies these multidimensional deviations without requiring the user to explicitly uncouple or model the underlying variables. By measuring the average number of random splits required to isolate a point, the algorithm maps shorter path lengths to higher spatial sparsity. This path length is mathematically normalized into a bounded anomaly score between 0 and 1. An anomaly score threshold (e.g., $>0.60$) can then be used to select the most deviating points.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/fig_02_scatterplot_matrix.jpg}
+    \caption{Pairwise scatterplot matrix of the HVAC telemetry (sampled at $n=5000$). The plots reveal complex, non-linear operational states and discrete mechanical dependencies that are not captured by linear correlation summaries.}
+    \label{fig:scatterplots}
+\end{figure}
+
+\section{Illustrative Examples}
+
+\subsection{Baseline Implementation: Unengineered Static Variables}
+
+An intuitive first approach when using \texttt{dynaRchetypes} is to pass the raw dataset (referred to here as \texttt{hvac\_data}) directly into the algorithm without prior feature engineering. In this baseline architecture, the user configures a YAML file (\texttt{naive\_config.yaml}) to list every variable as a \texttt{target\_variable}, leaving the \texttt{context\_variables} empty. The diagnostic pipeline is then executed via standard S4 methods:
+
+\begin{verbatim}
+# 1. Initialize engine and ingest unengineered telemetry
+engine <- new("DiagnosticEngine", config_path = "naive_config.yaml")
+engine <- ingest_telemetry(engine, data = hvac_data)
+
+# 2. Extract anomalies via Isolation Forest
+engine <- extract_anomalies(engine, threshold = 0.60)
+
+# 3. Compute MDTW trajectories and calibrate optimal clusters
+engine <- compute_distances(engine)
+engine <- calibrate(engine, min_k = 2, max_k = 25)
+\end{verbatim}
+
+To evaluate the operational viability of fault groupings derived from this raw matrix, we perform an algorithmic threshold sweep. This test maps both the total number of isolated events ($N$) and the resulting optimal number of clusters ($k$) returned by \texttt{calibrate()} across a continuous range of Isolation Forest anomaly thresholds. Internally, the engine determines this optimal $k$ by maximizing the Global Silhouette score, a geometric metric that evaluates cluster structural integrity by measuring how similar an event trajectory is to its own cluster (cohesion) compared to neighboring clusters (separation)\cite{rousseeuw1987silhouettes}. A reliable diagnostic pipeline requires the presence of a "stable region"---a contiguous range of thresholds that yields a consistent optimal $k$.
+
+As shown in Figure \ref{fig:naive_stability}, utilizing raw static variables fails to produce a stable region. The diagnostic pipeline is constrained by two opposing mathematical boundaries. At lower anomaly thresholds (e.g., $<0.59$), the Isolation Forest flags thousands of events, rendering the $O(N^2)$ MDTW distance calculation computationally prohibitive. Conversely, as the threshold increases and the event count ($N$) drops to a manageable size, the optimal number of clusters spikes abruptly, repeatedly hitting the algorithm's maximum evaluation ceiling (\texttt{max\_k} $= 25$ here). 
+
+Scientifically, this spike indicates cluster fragmentation; rather than identifying distinct, repetitive physical fault trajectories, the clustering algorithm is over-segmenting a small number of multidimensional distance calculations into nearly individual singletons ($k \to N$). Furthermore, from an operations research perspective, this behavior is not helpful: a triage system that outputs 25 distinct diagnostics is not practical.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{figures/fig_03_naive_stability.png}
+    \caption{Optimal $k$ across an anomaly threshold sweep using the naive architecture (raw, unengineered features). The erratic fluctuation indicates a lack of clustering stability.}
+    \label{fig:naive_stability}
+\end{figure}
+
+% In HVAC systems, variables often exhibit complex, non-linear dependencies. For example, while the Turin dataset indicates a moderate linear correlation ($r = 0.61$) between supply temperature (\texttt{t\_supply}) and saturation temperature (\texttt{t\_saturation}), a pairwise scatterplot reveals stacked, parallel bands rather than a simple linear trend. These bands represent discrete operational states, such as compressor staging. Attempting to manually engineer features to capture these multi-modal relationships—such as calculating exhaustive pairwise residuals—unnecessarily inflates the feature space. 
+% 
+% To bypass this problem, \texttt{dynaRchetypes} utilizes an Isolation Forest (IF) for the initial anomaly extraction. Because the IF algorithm partitions data using random orthogonal hyperplanes rather than spatial distance metrics, it is highly robust to these non-linear dependencies. Normal operational data, constrained by physical laws, clusters densely. When a mechanical fault occurs, the telemetry deviates into sparse feature space, where the IF efficiently isolates it. This architecture allows the user to input raw, inherently correlated thermodynamic variables directly into the YAML configuration without requiring explicit mathematical uncoupling.
 
 \subsection{Algorithmic Critique: Mitigating Theoretical Limitations}
 While Isolation Forest provides unmatched computational scalability ($O(N \log N)$) and natively handles multi-modal operational states without relying on local density assumptions (unlike DBSCAN or LOF), it possesses two inherent flaws when applied to continuous telemetry:
@@ -129,6 +181,7 @@ To achieve successful operational deployment, users must acknowledge the followi
 \end{itemize}
 
 \section{Conclusions}
+
 \texttt{dynaRchetypes} provides a highly structured, parameter-driven S4 architecture for extracting and clustering multidimensional telemetry faults. By synthesizing Isolation Forests with MDTW and implementing built-in XAI and prognostic drift validations, the software successfully translates noisy sensor data into a concise, stable set of operational dispatch queues. The software’s strict separation of mathematical targets from interpretable context ensures that the final outputs are not just mathematically sound, but immediately actionable for operators.
 
 \bibliographystyle{elsarticle-num}

@@ -1,0 +1,16 @@
+ntrees: 500
+sample_size: 256
+temporal_window_hours: 2
+anomaly_threshold: 0.60
+context_variables: []
+target_variables:
+  - t_supply
+  - t_return
+  - sp_return
+  - t_saturation
+  - t_outdoor
+  - rh_supply
+  - rh_return
+  - rh_outdoor
+  - energy
+  - power

@@ -1,0 +1,14 @@
+# inst/extdata/kinematic_config.yaml
+target_variables:
+  - delta_t
+  - delta_rh
+  - delta_t_deriv_15m
+  - t_supply_roll_sd_1h
+context_variables:
+  - is_occupied
+  - power
+  - t_outdoor
+  - temp_error
+  - t_return_deriv_15m
+
+

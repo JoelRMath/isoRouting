@@ -268,55 +268,26 @@ setMethod("compute_distances", "DiagnosticEngine", function(object) {
   targets <- object@feature_schema$target_variables
   n_events <- nrow(object@anomalies)
   
-  # Fetch dynamic window from YAML
-  window_hours <- object@hyperparameters$temporal_window_hours
-  if (is.null(window_hours)) {
-    warning("YAML missing 'temporal_window_hours'. Defaulting to 2.")
-    window_hours <- 2
-  }
+  message(sprintf("Computing instantaneous Euclidean distances for %d isolated events...", n_events))
   
-  message(sprintf("Extracting ±%d-hour multivariate time-series windows for %d events...", window_hours, n_events))
+  # 2. Global Scaling
+  # Scale the target variables across the ENTIRE dataset to preserve magnitude context
+  scaled_telemetry <- object@raw_telemetry
+  scaled_telemetry[, targets] <- scale(scaled_telemetry[, targets])
   
-  # 2. Dynamic Window Extraction Function
-  extract_ts_window_multi <- function(target_time) {
-    window_data <- object@raw_telemetry[
-      object@raw_telemetry$timestamp >= (target_time - lubridate::hours(window_hours)) & 
-        object@raw_telemetry$timestamp <= (target_time + lubridate::hours(window_hours)), 
-    ]
-    
-    # Isolate targets, scale, and cast to matrix
-    window_matrix <- as.matrix(scale(window_data[, targets, drop = FALSE]))
-    return(window_matrix)
-  }
+  # 3. Extract Instantaneous Anomaly Vectors
+  # Subset the globally scaled data to just the anomaly timestamps
+  anomaly_data <- scaled_telemetry[scaled_telemetry$timestamp %in% object@anomalies$timestamp, targets, drop = FALSE]
   
-  # Apply multivariate extraction to all anomalies
-  event_ts_list <- purrr::map(object@anomalies$timestamp, extract_ts_window_multi)
+  # 4. Compute standard Euclidean Distance Matrix
+  euclidean_dist <- stats::dist(as.matrix(anomaly_data), method = "euclidean")
   
-  message("Computing optimized N x N MDTW distance matrix...")
-  
-  # 3. Compute the O(N^2) MDTW distance matrix (Symmetric Optimization)
-  mdtw_dist_matrix <- matrix(0, nrow = n_events, ncol = n_events)
-  
-  for (i in 1:(n_events - 1)) {
-    for (j in (i + 1):n_events) {
-      dist_val <- dtw::dtw(
-        event_ts_list[[i]], 
-        event_ts_list[[j]], 
-        distance.only = TRUE
-      )$normalizedDistance
-      
-      # Populate symmetrically
-      mdtw_dist_matrix[i, j] <- dist_val
-      mdtw_dist_matrix[j, i] <- dist_val
-    }
-  }
-  
-  # 4. Cache the matrix and hierarchical tree
-  object@distance_matrix <- mdtw_dist_matrix
+  # Cache the matrix (cast to full matrix format to maintain compatibility with downstream plotting)
+  object@distance_matrix <- as.matrix(euclidean_dist)
   
   message("Constructing DIANA hierarchical tree cache...")
-  # Convert raw matrix to a 'dist' object for the clustering algorithm
-  object@hierarchical_tree <- as.hclust(cluster::diana(stats::as.dist(mdtw_dist_matrix)))
+  # cluster::diana natively accepts the 'dist' object
+  object@hierarchical_tree <- as.hclust(cluster::diana(euclidean_dist))
   
   # 5. Advance State
   object@domain_state <- "distances_computed"
