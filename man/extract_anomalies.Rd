@@ -15,6 +15,5 @@ extract_anomalies(object, threshold)
 An updated DiagnosticEngine object with the anomalies slot populated.
 }
 \description{
-Scores the feature matrix using an Isolation Forest and extracts
-extreme events exceeding the specified threshold.
+Scores the feature matrix and extracts extreme events exceeding the specified threshold.
 }

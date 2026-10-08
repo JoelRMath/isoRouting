@@ -5,10 +5,11 @@
 \alias{DiagnosticEngine-class}
 \title{DiagnosticEngine Class}
 \description{
-A stateful S4 class that acts as a domain-agnostic anomaly detection
-and routing engine. It ingests telemetry via a YAML configuration,
-computes geometric distances between anomalies, and optimizes
-operational routing queues using edge-weighted harmonic pairwise penalties.
+A stateful S4 class that acts as a deterministic forensic and predictive engine for
+multivariate time series. It utilizes Isolation Forests to extract extreme
+events, avoiding Euclidean distances by constructing a proximity
+matrix based on terminal node signatures (Hamming distance).
+It applies divisive hierarchical clustering and global silhouette to extract mathematically stable anomaly archetypes.
 }
 \section{Slots}{
 
@@ -21,22 +22,26 @@ operational routing queues using edge-weighted harmonic pairwise penalties.
 
 \item{\code{domain_state}}{character. Current lifecycle state of the engine.}
 
-\item{\code{raw_telemetry}}{data.frame. The base ingested dataset.}
+\item{\code{raw_time_course}}{data.frame. The base ingested dataset.}
 
 \item{\code{feature_matrix}}{data.frame. Data after applying YAML mutations.}
 
-\item{\code{anomalies}}{data.frame. Isolated extreme events triggering the routing logic.}
+\item{\code{anomalies}}{data.frame. Isolated extreme events triggering the analysis.}
 
-\item{\code{distance_matrix}}{matrix. Multivariate dynamic time warping (MDTW) distance matrix.}
+\item{\code{model}}{ANY. The trained isotree model object.}
+
+\item{\code{distance_matrix}}{matrix. Topological (Hamming) distance matrix of terminal nodes.}
 
 \item{\code{hierarchical_tree}}{ANY. The cached DIANA clustering object.}
 
 \item{\code{k_metrics}}{data.frame. Tracking of structural integrity across k-values.}
 
-\item{\code{medoids}}{list. Extracted physical archetypes for human-in-the-loop validation.}
+\item{\code{medoids}}{list. Extracted physical archetypes representing anomaly signatures.}
 
-\item{\code{active_k}}{numeric. The operational ground-truth number of queues.}
+\item{\code{baseline_signatures}}{matrix. Cached terminal node paths of the medoids for predictive routing.}
 
-\item{\code{routing_queues}}{data.frame. Final anomalies assigned to physical states.}
+\item{\code{active_k}}{numeric. The mathematically validated number of fault clusters.}
+
+\item{\code{forensic_ledger}}{data.frame. Ranked historical ledger mapping anomalies to their medoid.}
 }}
 

@@ -2,7 +2,7 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{compute_distances}
 \alias{compute_distances}
-\title{Compute MDTW Distance Matrix}
+\title{Compute Distance Matrix}
 \usage{
 compute_distances(object)
 }
@@ -13,6 +13,5 @@ compute_distances(object)
 An updated DiagnosticEngine object with distance_matrix and hierarchical_tree populated.
 }
 \description{
-Calculates the N x N Multivariate Dynamic Time Warping distance
-matrix for all isolated anomalies across a dynamic temporal window.
+Calculates the N x N topological Hamming distance matrix of terminal nodes.
 }

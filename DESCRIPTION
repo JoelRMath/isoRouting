@@ -1,8 +1,8 @@
-Package: dynaRchetypes
-Title: Diagnostic Engine for HVAC Telemetry and Fault Prediction
+Package: isoRouting
+Title: Diagnostic Engine for Multivariate Time Series (e.g., telemetry)
 Version: 0.1.0
 Authors@R: person("Joël R.", "Pradines", email = "joel.pradines@gmail.com", role = c("aut", "cre"))
-Description: An S4-based diagnostic engine designed to detect, cluster, and route multivariate anomalies in physical systems. It utilizes Isolation Forests for initial anomaly extraction, followed by hierarchical clustering of multivariate dynamic time warping (MDTW) profiles. Finally, it utilizes edge-weighted harmonic penalties to identify true physical failure states.
+Description: Provides a deterministic routing engine for multivariate time series anomaly detection. By extracting terminal node topologies from Isolation Forests, the package bypasses Euclidean scaling artifacts to cluster anomalies using Hamming distance and hierarchical division. It includes methods to calibrate cluster integrity, extract topological medoids, and route streaming data into established historical archetypes.    
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

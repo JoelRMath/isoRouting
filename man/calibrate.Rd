@@ -9,14 +9,13 @@ calibrate(object, min_k = 2, max_k = 8)
 \arguments{
 \item{object}{A DiagnosticEngine object.}
 
-\item{min_k}{Integer. Minimum number of operational queues to test. Default is 2.}
+\item{min_k}{Integer. Minimum number of clusters to test. Default is 2.}
 
-\item{max_k}{Integer. Maximum number of operational queues to test. Default is 8.}
+\item{max_k}{Integer. Maximum number of clusters to test. Default is 8.}
 }
 \value{
-An updated DiagnosticEngine object with k_metrics and medoids populated.
+An updated DiagnosticEngine object with k_metrics populated.
 }
 \description{
-Iterates through potential k values and calculates geometric integrity
-metrics (Global Silhouette, Product-Weighted Harmonic Pairwise) to locate the fracture point.
+Iterates through k-values and calculates global silhouette to locate the structural fracture point.
 }
