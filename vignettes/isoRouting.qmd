@@ -1,0 +1,32 @@
+---
+title: "Domain-Agnostic Anomaly Routing with isoRouting: The Turin HVAC Case Study"
+author: "Joël R. Pradines"
+date: today
+execute:
+  dir: project
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    theme: cosmo
+    math: true
+    embed-resources: true
+    highlight-style: tango
+    link-external-newwindow: true
+    include-after-body: 
+      text: |
+        <script>
+          document.querySelectorAll('a[href^="http"]').forEach(function(link) {
+            link.setAttribute("target", "_blank");
+          });
+        </script>
+bibliography: references.bib
+nocite: |
+  @*
+---
+
+<style>
+  h4 { font-weight: bold !important; }
+</style>
+
