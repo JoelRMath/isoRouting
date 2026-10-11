@@ -4,17 +4,19 @@
 \alias{ingest_time_course}
 \title{Ingest Time Course Data}
 \usage{
-ingest_time_course(object, data)
+ingest_time_course(object, data, tolerance = NULL)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}
 
 \item{data}{A data.frame containing the raw time course.}
+
+\item{tolerance}{Numeric. Allowable variance in seconds between timestamps. If NULL, enforcement is skipped.}
 }
 \value{
 An updated DiagnosticEngine object with the feature_matrix populated.
 }
 \description{
 Ingests raw multivariate time series and applies dynamic feature engineering
-as defined by the engine's YAML schema.
+as defined by the engine's YAML schema. Includes optional temporal continuity enforcement.
 }

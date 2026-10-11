@@ -1,7 +1,11 @@
 ---
-title: "Domain-Agnostic Anomaly Routing with isoRouting: The Turin HVAC Case Study"
+title: "Multivariate Time Series Anomaly Routing with isoRouting: Application to HVAC Telemetry"
 author: "Joël R. Pradines"
-date: today
+date: "`r Sys.Date()`"
+vignette: >
+  %\VignetteIndexEntry{Multivariate Time Series Anomaly Routing with isoRouting: Application to HVAC Telemetry}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
 execute:
   dir: project
 format:
@@ -29,4 +33,277 @@ nocite: |
 <style>
   h4 { font-weight: bold !important; }
 </style>
+<style>
+  h4 { font-weight: bold !important; }
+</style>
 
+## Introduction
+
+The `isoRouting` package provides a diagnostic engine for multivariate time series. It utilizes Isolation Forests and topological Hamming distances to isolate extreme events and route them into main archetypes, allowing systems to classify novel anomalies against historical baselines.
+
+To demonstrate this workflow, this vignette applies the `DiagnosticEngine` class of `isoRouting` to telemetry from a Turin R&D facility's HVAC system [@borda2022development]. We will walk through temporal data validation, anomaly extraction, and predictive routing.
+
+## Data Preparation and Temporal Integrity
+
+The first step in the `isoRouting` pipeline is preparing the raw time-course data. Because the engine's core methods rely on interpretable time intervals, DiagnosticEngine strictly requires a properly formatted datetime column named timestamp (POSIXt).
+
+We begin by loading the Turin HVAC dataset bundled with the package and verifying our time column:
+
+```{r}
+#| label: data-ingestion
+#| warning: false
+#| message: false
+
+library(isoRouting)
+library(dplyr)
+library(lubridate)
+
+# Load the package-associated Turin HVAC dataset
+data("hvac_features", package = "isoRouting")
+
+# Verify the timestamp column is present and properly classed
+class(hvac_features$timestamp)
+```
+
+Before initializing the engine, we must ensure there are no missing epochs that could skew the dynamical windowing. We use the `check_time_continuity()` helper to scan the dataset:
+
+```{r}
+#| label: continuity-check
+#| warning: false
+#| message: false
+
+# Evaluate temporal continuity
+continuity_check <- check_time_continuity(hvac_features$timestamp)
+
+# Flag returns FALSE if gaps are detected
+print(continuity_check)
+```
+
+The output of `check_time_continuity()` provides a boolean flag alongside a summary of all time intervals between consecutive rows. While the expected polling interval for the Turin HVAC system is 900 seconds (15 minutes), the `$summary` component exposes a large discontinuity of 15,814,800 seconds (approximately 6 months), alongside several smaller outages ranging from a few hours to six days.
+
+Ingesting a 6-month gap would severely distort estimations performed by `isoRouting`. However, the underlying Isolation Forest and distance matrices can handle minor maintenance downtimes without requiring synthetic data imputation.
+
+Therefore, we will split the dataset into two distinct operational periods across the 6-month boundary. We will use both early and late segments for different purposes in this vignette.
+
+```{r}
+#| label: data-split-and-validation
+#| warning: false
+#| message: false
+
+# Calculate time differences to locate the massive 6-month gap
+time_diffs <- as.numeric(difftime(
+  hvac_features$timestamp[-1], 
+  hvac_features$timestamp[-nrow(hvac_features)], 
+  units = "secs"
+))
+
+# Find the index of the 6-month offline period (15,814,800 seconds)
+major_gap_idx <- which(time_diffs == 15814800)
+
+# Bucket 1: Pre-Gap, ~40% of data
+baseline_telemetry <- hvac_features |> 
+  slice(1:major_gap_idx)
+
+# Bucket 2: Post-Gap, ~60% of data
+stream_telemetry <- hvac_features |> 
+  slice((major_gap_idx + 1):n())
+
+# Validate bucket 1: 
+# We set tolerance to 7 days (604800 seconds) to allow for 1- to 6-day maintenance 
+baseline_check <- check_time_continuity(baseline_telemetry$timestamp, tolerance = 604800)
+
+if (!baseline_check$is_continuous) {
+  stop("Bucket 1 contains structural time discontinuities.")
+} else {
+  cat("Bucket 1 temporal integrity verified. Minor outages are within 7-day tolerance.")
+}
+
+# Validate bucket 2: 
+stream_check <- check_time_continuity(stream_telemetry$timestamp, tolerance = 604800)
+
+if (!stream_check$is_continuous) {
+  stop("Bucket 2 data contains structural time discontinuities.")
+} else {
+  cat("Bucket 2 temporal integrity verified. Minor outages are within 7-day tolerance.")
+}
+```
+
+## Engine Configuration and Initialization
+
+The `DiagnosticEngine` relies on a YAML configuration file to define its machine learning hyperparameters and feature schema (variables to use). To begin, we configure the engine using a "naive" approach, passing the raw physical sensor readings directly into the model.
+
+In `isoRouting`, the feature schema partitions variables into two types:
+
+- **Target Variables:** The feature space the Isolation Forest uses to score anomalies and the engine uses to compute topological distances.
+- **Context Variables:** Variables excluded from the mathematical model, but retained within the extracted medoid windows to provide human-interpretable context during visual analysis.
+
+In our naive configuration, we assign all primary temperature, humidity, and power metrics as target variables, leaving the context variables empty. We instantiate the S4 object by calling `new("DiagnosticEngine", config_path = ...)`, pointing it to our YAML file.
+
+```{r}
+#| label: naive-initialization
+#| warning: false
+
+# Define the naive YAML schema using raw sensor values
+yaml_naive <- "
+ntrees: 500
+sample_size: 256
+temporal_window_hours: 2
+anomaly_threshold: 0.60
+context_variables: []
+target_variables:
+  - t_supply
+  - t_return
+  - sp_return
+  - t_saturation
+  - t_outdoor
+  - rh_supply
+  - rh_return
+  - rh_outdoor
+  - energy
+  - power
+"
+
+# Write the configuration to a temporary file for ingestion
+config_naive <- tempfile(pattern = "naive_config_", fileext = ".yml")
+writeLines(yaml_naive, config_naive)
+
+# Instantiate the DiagnosticEngine
+engine <- new("DiagnosticEngine", config_path = config_naive)
+
+# Verify the target and context variables parsed from the schema
+get_features(engine)
+```
+
+## Time Course Ingestion
+
+Once the engine is configured, the next step is to load the dataset into the S4 object using the `ingest_time_course()` method.
+
+This method performs validation checks before locking the data into the engine. It verifies that the required `timestamp` column is present and properly formatted, and it ensures that variables listed under `target_variables` in the YAML schema exist within the provided dataframe. 
+
+Crucially, the engine strictly enforces the schema: it culls any extraneous columns not defined as target or context variables, caching only the authorized dataset for memory-efficient downstream anomaly extraction.
+
+```{r}
+#| label: ingest-time-course
+#| warning: false
+#| message: false
+
+# Ingest the historical baseline telemetry into the engine
+engine <- ingest_time_course(engine, data = baseline_telemetry)
+
+# Verify the updated lifecycle state of the engine
+engine@domain_state
+
+# Inspect the ingested data structure (note: features not included in the yaml are dropped)
+glimpse(get_time_course(engine))
+```
+
+## Anomaly Extraction via Isolation Forest
+
+With the time course ingested and cached in the engine, we now trigger the anomaly extraction phase using `extract_anomalies()`. 
+
+The `DiagnosticEngine` employs an Isolation Forest (`isotree`) to score the feature space. Unlike distance-based algorithms, Isolation Forests isolate anomalies by randomly selecting a feature and a split value. Anomalies—being "few and different"—require fewer splits to be isolated, resulting in shorter path lengths in the forest's decision trees.
+
+The engine uses the hyperparameters defined in our YAML schema (e.g., `ntrees: 500`, `sample_size: 256`) to build the forest. It then scores every observation in our baseline telemetry. Any event with an empirical anomaly score exceeding our YAML-defined threshold (`0.60`) is permanently isolated for downstream topological routing.
+
+```{r}
+#| label: extract-anomalies
+#| warning: false
+#| message: false
+
+# Score the feature space and extract extreme events
+engine <- extract_anomalies(engine)
+
+# Verify the engine state
+engine@domain_state
+
+# The isolated events are now cached in the anomalies slot. 
+# We can check how many extreme events exceeded our threshold:
+nrow(engine@anomalies)
+```
+
+### Visualizing the Threshold Landscape
+
+Before officially extracting anomalies, how do we know `0.60` is the correct threshold to define in our YAML? 
+
+Choosing an anomaly threshold requires balancing signal and noise. If the threshold is too high, we miss critical systemic faults; if it is too low, we flood the engine with minor variance, diluting the topological archetypes.
+
+`isoRouting` provides the `explore_thresholds()` method to rapidly score the feature space without mutating the engine's internal state. This allows users to visualize the decay curve of extreme events and select a mathematically sound inflection point for their configuration.
+
+```{r}
+#| label: explore-thresholds
+#| warning: false
+#| message: false
+
+library(ggplot2)
+
+# Generate a threshold landscape for the ingested baseline telemetry
+threshold_curve <- explore_thresholds(engine, thresholds = seq(0.50, 0.75, by = 0.01))
+
+# Plot the decay of extreme events
+ggplot(threshold_curve, aes(x = Threshold, y = Event_Count)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "darkblue", size = 2) +
+  geom_vline(xintercept = 0.60, linetype = "dashed", color = "red") +
+  labs(
+    title = "Anomaly Threshold Decay Curve",
+    subtitle = "Red dashed line indicates the 0.60 YAML selection",
+    x = "Isolation Forest Threshold",
+    y = "Number of Extracted Events"
+  ) +
+  theme_minimal()
+```
+
+### Validating Topological Stability
+
+Before locking in our anomaly threshold, we must ensure the resulting physical archetypes are stable. It is not enough to count the number of extracted events; we must verify that the optimal number of anomaly clusters ($k_{opt}$) remains consistent across a range of thresholds. 
+
+Using `evaluate_k_stability()`, the engine scores the feature space once, iteratively subsets the anomalies across a threshold sequence, constructs the topological distance matrices, and extracts the optimal $k$ via Global Silhouette maximization for each step.
+
+```{r}
+#| label: evaluate-stability
+#| warning: false
+#| message: false
+library(ggplot2)
+
+# Sweep thresholds from 0.57 to 0.67 to test structural stability
+stability_curve <- evaluate_k_stability(engine, thresholds = seq(0.57, 0.67, by = 0.005), max_k = 10)
+
+max_k <- 10
+# Plot the optimal K plateau
+ggplot(stability_curve, aes(x = Threshold, y = Opt_k)) +
+  geom_line(linewidth = 1.2, color = "#0072B2") +
+  geom_point(size = 3, color = "#0072B2") +
+  scale_y_continuous(breaks = seq(2, max_k, by = 1), limits = c(2, max_k)) +
+  labs(
+    title = "Topological Stability of Anomaly Archetypes",
+    subtitle = "A stable plateau would indicate robust, non-artifactual clusters",
+    x = "Anomaly Threshold",
+    y = "Optimal Number of Clusters (k)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"))
+```
+
+### Quantifying Topological Instability
+
+Visual inspection of the $k_{opt}$ profile suggests a highly volatile topology, but we can rigorously quantify this instability by examining the step-by-step variance across the threshold continuum. 
+
+Standard variance metrics like standard deviation are inappropriate here because they ignore the sequential nature of the thresholds. Instead, we can calculate the discrete first derivative of the $k_{opt}$ sequence—measuring exactly how many clusters are created or destroyed with every 0.005 adjustment to the threshold.
+
+```{r}
+#| label: quantify-instability
+#| warning: false
+#| message: false
+
+# Calculate the absolute step differences (discrete derivative)
+k_jumps <- abs(diff(stability_curve$Opt_k))
+
+# Calculate instability metrics
+masd <- mean(k_jumps)
+max_jump <- max(k_jumps)
+max_plateau <- max(rle(stability_curve$Opt_k)$lengths)
+
+cat(sprintf("Mean Absolute Step Difference: %.2f clusters\n", masd))
+cat(sprintf("Maximum Single Step Jump: %d clusters\n", max_jump))
+cat(sprintf("Maximum Stable Plateau: %d steps\n", max_plateau))
+```

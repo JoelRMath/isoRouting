@@ -61,7 +61,6 @@ setClass(
   }
 )
 
-# --- ENGINE API (GENERICS) ---
 
 # --- ENGINE API (GENERICS) ---
 
@@ -91,12 +90,13 @@ setGeneric("get_medoids", function(object) standardGeneric("get_medoids"))
 
 #' @title Ingest Time Course Data
 #' @description Ingests raw multivariate time series and applies dynamic feature engineering 
-#' as defined by the engine's YAML schema.
+#' as defined by the engine's YAML schema. Includes optional temporal continuity enforcement.
 #' @param object A DiagnosticEngine object.
 #' @param data A data.frame containing the raw time course.
+#' @param tolerance Numeric. Allowable variance in seconds between timestamps. If NULL, enforcement is skipped.
 #' @return An updated DiagnosticEngine object with the feature_matrix populated.
 #' @export
-setGeneric("ingest_time_course", function(object, data) standardGeneric("ingest_time_course"))
+setGeneric("ingest_time_course", function(object, data, tolerance = NULL) standardGeneric("ingest_time_course"))
 
 #' @title Extract Anomalies via Isolation Forest
 #' @description Scores the feature matrix and extracts extreme events exceeding the specified threshold.
@@ -147,6 +147,39 @@ setGeneric("commit_ledger", function(object, k) standardGeneric("commit_ledger")
 #' @export
 setGeneric("predict_stream", function(object, new_data) standardGeneric("predict_stream"))
 
+#' @title Get Ingested Time Course
+#' @description Returns the schema-validated raw time course data.
+#' @param object A DiagnosticEngine object.
+#' @export
+setGeneric("get_time_course", function(object) standardGeneric("get_time_course"))
+
+#' @title Get Ingested Time Course
+#' @description Returns the schema-validated raw time course data.
+#' @param object A DiagnosticEngine object.
+#' @export
+setGeneric("get_time_course", function(object) standardGeneric("get_time_course"))
+
+#' @title Explore Anomaly Thresholds
+#' @description Rapidly scores the feature space and returns a mapping of 
+#' anomaly thresholds to the number of extracted events.
+#' @param object A DiagnosticEngine object.
+#' @param thresholds Numeric vector of thresholds to test.
+#' @param ntrees Integer. Overrides YAML if provided.
+#' @param sample_size Integer. Overrides YAML if provided.
+#' @export
+setGeneric("explore_thresholds", function(object, thresholds = seq(0.50, 0.80, by = 0.01), ntrees = NULL, sample_size = NULL) standardGeneric("explore_thresholds"))
+
+#' @title Evaluate K-Stability Across Thresholds
+#' @description Iteratively computes topological distance and cluster calibration across a sequence of 
+#' anomaly thresholds to test the stability of physical fault archetypes.
+#' @param object A DiagnosticEngine object.
+#' @param thresholds Numeric vector of thresholds to test.
+#' @param min_k Integer. Minimum clusters to test per threshold. Default is 2.
+#' @param max_k Integer. Maximum clusters to test per threshold. Default is 8.
+#' @return A data.frame mapping thresholds to anomaly counts and optimal k-values.
+#' @export
+setGeneric("evaluate_k_stability", function(object, thresholds = seq(0.55, 0.70, by = 0.01), min_k = 2, max_k = 8) standardGeneric("evaluate_k_stability"))
+
 # --- INITIALIZATION METHOD ---
 
 #' @export
@@ -166,8 +199,8 @@ setMethod("initialize", "DiagnosticEngine", function(.Object, config_path, ...) 
     }
     
     .Object@feature_schema <- list(
-      target_variables = raw_yaml$target_variables,
-      context_variables = raw_yaml$context_variables # Can be NULL, that's safe
+      target_variables = as.character(unlist(raw_yaml$target_variables)),
+      context_variables = as.character(unlist(raw_yaml$context_variables))
     )
     
     # Parse ML Hyperparameters with safe defaults if missing from YAML
@@ -186,7 +219,6 @@ setMethod("initialize", "DiagnosticEngine", function(.Object, config_path, ...) 
   return(.Object)
 })
 
-# --- ACCESSORS ---
 
 # --- ACCESSORS ---
 
@@ -217,46 +249,83 @@ setMethod("get_medoids", "DiagnosticEngine", function(object) {
   return(dplyr::bind_rows(object@medoids))
 })
 
+#' @export
+setMethod("get_time_course", "DiagnosticEngine", function(object) {
+  if (nrow(object@raw_time_course) == 0) {
+    warning("Time course is empty. Ensure ingest_time_course() has been executed.")
+  }
+  return(object@raw_time_course)
+})
+
 # --- CORE METHODS ---
 
 #' @export
-setMethod("ingest_time_course", "DiagnosticEngine", function(object, data) {
+setMethod("ingest_time_course", "DiagnosticEngine", function(object, data, tolerance = NULL) {
   if (object@domain_state == "uninitialized") {
     stop("Fatal Error: Engine must be initialized with a YAML schema prior to ingestion.")
   }
   
-  # Updated slot name
-  object@raw_time_course <- data
-  targets <- object@feature_schema$target_variables
-  
-  if (is.null(targets)) {
-    stop("YAML schema missing 'target_variables' array.")
+  if (nrow(data) < 3) {
+    stop("Fatal Error: Ingested data must contain at least 3 observations to compute temporal continuity and baseline statistics.")
   }
+  
+  # 1. Enforce timestamp existence
+  if (!"timestamp" %in% colnames(data)) {
+    stop("Fatal Error: Ingested data must contain a column named 'timestamp'.")
+  }
+  
+  # 2. Enforce datetime class for downstream lubridate compatibility
+  if (!inherits(data$timestamp, "POSIXt")) {
+    stop("Fatal Error: The 'timestamp' column must be a POSIXct/POSIXlt datetime object.")
+  }
+  
+  if (!is.null(tolerance)) {
+    continuity_check <- check_time_continuity(data$timestamp, tolerance = tolerance)
+    if (!continuity_check$is_continuous) {
+      stop(sprintf("Fatal Error: Ingested data contains time discontinuities exceeding the %d-second tolerance.", tolerance))
+    }
+  }
+  
+  # 3. Schema mapping and column culling
+  targets <- object@feature_schema$target_variables
+  contexts <- object@feature_schema$context_variables
+  
+  if (is.null(targets)) stop("YAML schema missing 'target_variables'.")
   
   if (!all(targets %in% colnames(data))) {
     missing_cols <- setdiff(targets, colnames(data))
     stop(sprintf("Data missing schema targets: %s", paste(missing_cols, collapse = ", ")))
   }
   
+  schema_cols <- unique(c("timestamp", targets, contexts))
+  keep_cols <- intersect(schema_cols, colnames(data))
+  
+  object@raw_time_course <- data[, keep_cols, drop = FALSE]
   object@feature_matrix <- data[, targets, drop = FALSE]
   object@domain_state <- "time_course_ingested"
   
-  message(sprintf("Time course ingested successfully. Feature matrix locked at %d rows by %d features.", 
-                  nrow(object@feature_matrix), ncol(object@feature_matrix)))
+  message(sprintf("Time course ingested successfully. Data locked at %d rows by %d schema variables.", 
+                  nrow(object@raw_time_course), ncol(object@raw_time_course)))
   
   return(object)
 })
 
 #' @export
 setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
-  # 1. Update state checks to match the new ingestion terminology
-  if (!object@domain_state %in% c("time_course_ingested", "calibrated")) {
+  # Allow re-extraction at any point after initial ingestion
+  valid_states <- c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")
+  
+  if (!object@domain_state %in% valid_states) {
     stop("Fatal Error: Time course data must be ingested before extracting anomalies.")
   }
   
-  # 2. Safely rely on the hardened initialize method for defaults
+  # --- THE OVERRIDE LOGIC ---
   if (missing(threshold)) {
     threshold <- object@hyperparameters$anomaly_threshold
+  } else {
+    # If the user provides a threshold at runtime, update the slot so the forensic record is accurate
+    object@hyperparameters$anomaly_threshold <- threshold
+    message(sprintf("YAML threshold overridden. Using runtime threshold: %s", threshold))
   }
   
   sample_size <- object@hyperparameters$sample_size
@@ -265,9 +334,7 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   message(sprintf("Training Isolation Forest (ntrees=%d, sample_size=%d) and scoring feature space...", 
                   ntrees, sample_size))
   
-  # Enforce determinism for forensic consistency
   set.seed(42)
-  
   actual_sample_size <- min(sample_size, nrow(object@feature_matrix))
   
   iso_model <- suppressWarnings(isotree::isolation.forest(
@@ -279,17 +346,13 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   
   scores <- stats::predict(iso_model, object@feature_matrix)
   
-  # 3. Update slot reference to raw_time_course
   scored_data <- object@raw_time_course
   scored_data$anomaly_score <- scores
   
-  # 4. Change strictly greater (>) to greater-or-equal (>=) to match earlier threshold sweeps
   object@anomalies <- scored_data[scored_data$anomaly_score >= threshold, ]
-  
-  # Cache the model for downstream topology extraction and predictive routing
   object@model <- iso_model
-  
   object@domain_state <- "anomalies_extracted"
+  
   message(sprintf("Anomaly extraction complete. %d extreme events isolated (Score >= %s).", 
                   nrow(object@anomalies), threshold))
   
@@ -583,4 +646,92 @@ setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
   message("Routing complete. Return dataframe contains anomaly scores and predicted physical states.")
   
   return(results_df)
+})
+
+#' @export
+setMethod("explore_thresholds", "DiagnosticEngine", function(object, thresholds, ntrees, sample_size) {
+  if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
+    stop("Fatal Error: Time course must be ingested before exploring thresholds.")
+  }
+  
+  hyps <- object@hyperparameters
+  if (is.null(ntrees)) ntrees <- hyps$ntrees
+  if (is.null(sample_size)) sample_size <- hyps$sample_size
+  
+  message("Scoring feature space to build threshold curve...")
+  set.seed(42)
+  actual_size <- min(sample_size, nrow(object@feature_matrix))
+  
+  iso_model <- suppressWarnings(isotree::isolation.forest(
+    object@feature_matrix, ntrees = ntrees, sample_size = actual_size, missing_action = "fail"
+  ))
+  scores <- stats::predict(iso_model, object@feature_matrix)
+  
+  counts <- purrr::map_int(thresholds, ~sum(scores >= .x))
+  return(data.frame(Threshold = thresholds, Event_Count = counts))
+})
+
+#' @export
+setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, thresholds, min_k, max_k) {
+  if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
+    stop("Fatal Error: Time course must be ingested before evaluating k-stability.")
+  }
+  
+  hyps <- object@hyperparameters
+  ntrees <- hyps$ntrees
+  sample_size <- hyps$sample_size
+  
+  message("Training static Isolation Forest for stability sweep...")
+  set.seed(42)
+  actual_size <- min(sample_size, nrow(object@feature_matrix))
+  
+  iso_model <- suppressWarnings(isotree::isolation.forest(
+    object@feature_matrix, ntrees = ntrees, sample_size = actual_size, missing_action = "fail"
+  ))
+  scores <- stats::predict(iso_model, object@feature_matrix)
+  
+  base_data <- object@raw_time_course
+  base_data$anomaly_score <- scores
+  
+  results_list <- list()
+  
+  for (th in thresholds) {
+    idx <- which(scores >= th)
+    
+    # Must have more anomalies than max_k to cluster successfully
+    if (length(idx) <= max_k) {
+      results_list[[as.character(th)]] <- data.frame(
+        Threshold = th, N_Anomalies = length(idx), Opt_k = NA_real_
+      )
+      next
+    }
+    
+    # Create temporary engine state to utilize existing S4 methods[cite: 5]
+    tmp_engine <- object
+    tmp_engine@anomalies <- base_data[idx, ]
+    tmp_engine@model <- iso_model
+    tmp_engine@domain_state <- "anomalies_extracted"
+    
+    # Suppress console flood during iterative calibration[cite: 5]
+    tmp_engine <- suppressMessages(compute_distances(tmp_engine))
+    tmp_engine <- suppressMessages(calibrate(tmp_engine, min_k = min_k, max_k = max_k))
+    
+    df_k <- tmp_engine@k_metrics
+    valid_idx <- which(!is.na(df_k$global_silhouette))
+    
+    if (length(valid_idx) > 0) {
+      best_idx <- valid_idx[which.max(df_k$global_silhouette[valid_idx])]
+      opt_k <- df_k$k[best_idx]
+      max_sil <- df_k$global_silhouette[best_idx]
+    } else {
+      opt_k <- NA_real_
+      max_sil <- NA_real_
+    }
+    
+    results_list[[as.character(th)]] <- data.frame(
+      Threshold = th, N_Anomalies = length(idx), Opt_k = opt_k, Max_Silhouette = max_sil
+    )
+  }
+  
+  return(dplyr::bind_rows(results_list))
 })

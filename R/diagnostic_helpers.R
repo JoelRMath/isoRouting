@@ -77,3 +77,33 @@ assess_forest_stability <- function(data,
   message("Stability assessment complete.")
   return(do.call(rbind, results_list))
 }
+
+#' Detect gaps or irregular intervals in a time series
+#' 
+#' @param time_vector A POSIXct vector of timestamps.
+#' @param tolerance Numeric. Allowable variance in seconds (default 0).
+#' @return A list containing a boolean flag and a summary of intervals.
+#' @export
+check_time_continuity <- function(time_vector, tolerance = 0) {
+  if (!inherits(time_vector, "POSIXt")) {
+    stop("time_vector must be a datetime object (POSIXct/POSIXlt).")
+  }
+  
+  # Calculate time differences in seconds
+  time_diffs <- as.numeric(difftime(time_vector[-1], time_vector[-length(time_vector)], units = "secs"))
+  
+  # Determine the median interval (assumed to be the intended frequency)
+  expected_diff <- median(time_diffs, na.rm = TRUE)
+  
+  # Identify discontinuities outside the tolerance
+  gaps <- which(abs(time_diffs - expected_diff) > tolerance)
+  
+  is_continuous <- length(gaps) == 0
+  
+  list(
+    is_continuous = is_continuous,
+    expected_interval_secs = expected_diff,
+    gap_indices = gaps,
+    summary = table(time_diffs)
+  )
+}

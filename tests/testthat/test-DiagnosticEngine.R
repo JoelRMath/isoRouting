@@ -89,3 +89,142 @@ test_that("DiagnosticEngine catches missing YAML targets on initialization", {
   
   unlink(broken_yaml_path)
 })
+
+test_that("ingest_time_course mathematically enforces temporal tolerance", {
+  
+  # 1. Setup minimal engine using a temporary YAML configuration
+  yaml_config <- "
+target_variables:
+  - t_supply
+"
+  config_file <- tempfile(fileext = ".yml")
+  writeLines(yaml_config, config_file)
+  
+  engine <- new("DiagnosticEngine", config_path = config_file)
+  
+  # 2. Create mock data with a clear baseline and exactly one 10-hour gap (36,000 seconds)
+  mock_data <- data.frame(
+    timestamp = as.POSIXct(c(
+      "2026-10-14 09:00:00",
+      "2026-10-14 10:00:00",   # 1-hour gap
+      "2026-10-14 11:00:00",   # 1-hour gap
+      "2026-10-14 12:00:00",   # 1-hour gap
+      "2026-10-14 22:00:00"    # 10-hour gap
+    ), tz = "UTC"),
+    t_supply = c(20.0, 20.1, 20.2, 20.3, 20.5)
+  )
+  
+  # 3. Test Success: Engine must accept data if tolerance is larger than the gap (e.g., 12 hours)
+  expect_no_error({
+    valid_engine <- ingest_time_course(engine, data = mock_data, tolerance = 43200)
+  })
+  expect_equal(valid_engine@domain_state, "time_course_ingested")
+  
+  # 4. Test Failure: Engine must throw a fatal error if tolerance is smaller than the gap (e.g., 5 hours)
+  expect_error(
+    ingest_time_course(engine, data = mock_data, tolerance = 18000),
+    regexp = "Fatal Error: Ingested data contains time discontinuities exceeding the 18000-second tolerance."
+  )
+  
+  # Cleanup
+  unlink(config_file)
+})
+
+test_that("explore_thresholds returns correct structure and catches state errors", {
+  yaml_config <- "
+target_variables:
+  - t_supply
+anomaly_threshold: 0.60
+ntrees: 50
+sample_size: 16
+"
+  config_file <- tempfile(fileext = ".yml")
+  writeLines(yaml_config, config_file)
+  engine <- new("DiagnosticEngine", config_path = config_file)
+  
+  # 1. Test failure on uninitialized state (before ingestion)
+  expect_error(
+    explore_thresholds(engine, thresholds = c(0.5, 0.6)), 
+    "Fatal Error: Time course must be ingested"
+  )
+  
+  # 2. Ingest valid data
+  mock_data <- data.frame(
+    timestamp = as.POSIXct(c("2026-10-14 09:00:00", "2026-10-14 10:00:00", "2026-10-14 11:00:00"), tz = "UTC"),
+    t_supply = c(20.0, 20.1, 20.5)
+  )
+  engine <- ingest_time_course(engine, data = mock_data)
+  
+  # 3. Test successful execution and correct output structure
+  curve_df <- explore_thresholds(engine, thresholds = c(0.5, 0.6, 0.7))
+  
+  expect_s3_class(curve_df, "data.frame")
+  expect_equal(colnames(curve_df), c("Threshold", "Event_Count"))
+  expect_equal(nrow(curve_df), 3)
+  expect_type(curve_df$Event_Count, "integer")
+  
+  unlink(config_file)
+})
+
+test_that("extract_anomalies allows runtime threshold override and updates hyperparameters", {
+  yaml_config <- "
+target_variables:
+  - t_supply
+anomaly_threshold: 0.60
+ntrees: 50
+sample_size: 16
+"
+  config_file <- tempfile(fileext = ".yml")
+  writeLines(yaml_config, config_file)
+  engine <- new("DiagnosticEngine", config_path = config_file)
+  
+  mock_data <- data.frame(
+    timestamp = as.POSIXct(c("2026-10-14 09:00:00", "2026-10-14 10:00:00", "2026-10-14 11:00:00"), tz = "UTC"),
+    t_supply = c(20.0, 20.1, 20.5)
+  )
+  engine <- ingest_time_course(engine, data = mock_data)
+  
+  # 1. Extract anomalies with a dynamic override
+  engine <- extract_anomalies(engine, threshold = 0.75)
+  
+  # 2. Verify the engine state advanced
+  expect_equal(engine@domain_state, "anomalies_extracted")
+  
+  # 3. Verify the hyperparameter slot was correctly mutated for downstream ledger accuracy
+  expect_equal(get_hyperparameters(engine)$anomaly_threshold, 0.75)
+  
+  unlink(config_file)
+})
+
+test_that("evaluate_k_stability returns robust cluster mappings across thresholds", {
+  yaml_config <- "
+target_variables:
+  - t_supply
+anomaly_threshold: 0.60
+ntrees: 10
+sample_size: 16
+"
+  config_file <- tempfile(fileext = ".yml")
+  writeLines(yaml_config, config_file)
+  engine <- new("DiagnosticEngine", config_path = config_file)
+  
+  # Create sufficient mock data to allow clustering (needs > max_k anomalies)
+  mock_data <- data.frame(
+    timestamp = as.POSIXct(seq.POSIXt(from = as.POSIXct("2026-10-14 00:00:00", tz = "UTC"), 
+                                      by = "hour", length.out = 15)),
+    t_supply = c(rep(20.0, 10), 25.0, 26.0, 27.0, 28.0, 29.0) # 5 distinct anomalies
+  )
+  
+  engine <- ingest_time_course(engine, data = mock_data)
+  
+  # Execute stability evaluation
+  # Set thresholds low enough to capture the 5 anomalies
+  stability_df <- evaluate_k_stability(engine, thresholds = c(0.40, 0.45), min_k = 2, max_k = 3)
+  
+  expect_s3_class(stability_df, "data.frame")
+  expect_equal(colnames(stability_df), c("Threshold", "N_Anomalies", "Opt_k", "Max_Silhouette"))
+  expect_equal(nrow(stability_df), 2)
+  expect_true(is.numeric(stability_df$Opt_k))
+  
+  unlink(config_file)
+})
