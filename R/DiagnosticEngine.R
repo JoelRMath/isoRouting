@@ -701,19 +701,32 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, threshold
     # Must have more anomalies than max_k to cluster successfully
     if (length(idx) <= max_k) {
       results_list[[as.character(th)]] <- data.frame(
-        Threshold = th, N_Anomalies = length(idx), Opt_k = NA_real_
+        Threshold = th, N_Anomalies = length(idx), Opt_k = NA_real_, 
+        Max_Silhouette = NA_real_, Hartigans_D = NA_real_
       )
       next
     }
     
-    # Create temporary engine state to utilize existing S4 methods[cite: 5]
+    # Create temporary engine state to utilize existing S4 methods
     tmp_engine <- object
     tmp_engine@anomalies <- base_data[idx, ]
     tmp_engine@model <- iso_model
     tmp_engine@domain_state <- "anomalies_extracted"
     
-    # Suppress console flood during iterative calibration[cite: 5]
+    # Suppress console flood during iterative calibration
     tmp_engine <- suppressMessages(compute_distances(tmp_engine))
+    
+    # --- CALCULATE HARTIGAN'S DIP STATISTIC (D) ---
+    d_mat <- tmp_engine@distance_matrix
+    d_vec <- d_mat[upper.tri(d_mat)]
+    
+    if (length(d_vec) >= 4) {
+      dip_stat <- diptest::dip(d_vec)
+    } else {
+      dip_stat <- NA_real_
+    }
+    # ---------------------------------------------------
+    
     tmp_engine <- suppressMessages(calibrate(tmp_engine, min_k = min_k, max_k = max_k))
     
     df_k <- tmp_engine@k_metrics
@@ -729,9 +742,12 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, threshold
     }
     
     results_list[[as.character(th)]] <- data.frame(
-      Threshold = th, N_Anomalies = length(idx), Opt_k = opt_k, Max_Silhouette = max_sil
+      Threshold = th, N_Anomalies = length(idx), Opt_k = opt_k, 
+      Max_Silhouette = max_sil, Hartigans_D = dip_stat
     )
   }
   
-  return(dplyr::bind_rows(results_list))
+  res_df <- dplyr::bind_rows(results_list)
+  
+  return(res_df)
 })

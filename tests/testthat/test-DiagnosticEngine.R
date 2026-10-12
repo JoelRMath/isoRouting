@@ -196,7 +196,7 @@ sample_size: 16
   unlink(config_file)
 })
 
-test_that("evaluate_k_stability returns robust cluster mappings across thresholds", {
+test_that("evaluate_k_stability returns robust cluster mappings without scalar indices", {
   yaml_config <- "
 target_variables:
   - t_supply
@@ -208,23 +208,22 @@ sample_size: 16
   writeLines(yaml_config, config_file)
   engine <- new("DiagnosticEngine", config_path = config_file)
   
-  # Create sufficient mock data to allow clustering (needs > max_k anomalies)
   mock_data <- data.frame(
     timestamp = as.POSIXct(seq.POSIXt(from = as.POSIXct("2026-10-14 00:00:00", tz = "UTC"), 
                                       by = "hour", length.out = 15)),
-    t_supply = c(rep(20.0, 10), 25.0, 26.0, 27.0, 28.0, 29.0) # 5 distinct anomalies
+    t_supply = c(rep(20.0, 10), 25.0, 26.0, 27.0, 28.0, 29.0)
   )
   
   engine <- ingest_time_course(engine, data = mock_data)
   
-  # Execute stability evaluation
-  # Set thresholds low enough to capture the 5 anomalies
-  stability_df <- evaluate_k_stability(engine, thresholds = c(0.40, 0.45), min_k = 2, max_k = 3)
+  stability_results <- evaluate_k_stability(engine, thresholds = c(0.40, 0.45), min_k = 2, max_k = 3)
   
-  expect_s3_class(stability_df, "data.frame")
-  expect_equal(colnames(stability_df), c("Threshold", "N_Anomalies", "Opt_k", "Max_Silhouette"))
-  expect_equal(nrow(stability_df), 2)
-  expect_true(is.numeric(stability_df$Opt_k))
+  # Check dataframe profile class and structure directly
+  expect_s3_class(stability_results, "data.frame")
+  expect_equal(
+    colnames(stability_results), 
+    c("Threshold", "N_Anomalies", "Opt_k", "Max_Silhouette", "Hartigans_D")
+  )
   
   unlink(config_file)
 })

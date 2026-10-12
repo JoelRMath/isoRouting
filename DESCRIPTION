@@ -16,7 +16,8 @@ Imports:
     methods,
     purrr,
     stats,
-    yaml
+    yaml,
+    diptest
 Depends: 
     R (>= 3.5)
 LazyData: true

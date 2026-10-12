@@ -3,7 +3,6 @@ target_variables:
   - delta_t
   - delta_rh
   - delta_t_deriv_15m
-  - t_supply_roll_sd_1h
 context_variables:
   - power
   - t_outdoor
@@ -11,5 +10,3 @@ context_variables:
   - t_supply
   - t_return
   - sp_return
-
-

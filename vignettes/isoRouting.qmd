@@ -1,5 +1,5 @@
 ---
-title: "Multivariate Time Series Anomaly Routing with isoRouting: Application to HVAC Telemetry"
+title: "Multivariate Time Series Anomaly Routing with isoRouting: Example of Application to HVAC Telemetry"
 author: "Joël R. Pradines"
 date: "`r Sys.Date()`"
 vignette: >
@@ -11,7 +11,7 @@ execute:
 format:
   html:
     toc: true
-    toc-depth: 3
+    toc-depth: 4
     toc-location: left
     theme: cosmo
     math: true
@@ -33,15 +33,124 @@ nocite: |
 <style>
   h4 { font-weight: bold !important; }
 </style>
-<style>
-  h4 { font-weight: bold !important; }
-</style>
 
-## Introduction
 
-The `isoRouting` package provides a diagnostic engine for multivariate time series. It utilizes Isolation Forests and topological Hamming distances to isolate extreme events and route them into main archetypes, allowing systems to classify novel anomalies against historical baselines.
+## Motivation: Complex Variable Dependencies in Multivariate Time Series
 
-To demonstrate this workflow, this vignette applies the `DiagnosticEngine` class of `isoRouting` to telemetry from a Turin R&D facility's HVAC system [@borda2022development]. We will walk through temporal data validation, anomaly extraction, and predictive routing.
+Building predictive diagnostic models for multivariate time series often begins with feature selection. A standard machine learning reflex is to compute a linear correlation matrix to identify and drop redundant variables. While useful for simple stochastic processes, this linear assumption frequently breaks down in physical domains.
+
+In industrial IoT, for example, variables are governed by causal, closed-loop mechanics. To illustrate this, we load the `hvac_features` dataset (Turin HVAC telemetry [@borda2022development]) provided with `isoRouting` and examine the linear correlation across its 11 telemetry channels.
+
+
+```{r}
+#| label: fig-correlation
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Global Pearson correlation heatmap (Turin HVAC Raw Telemetry)"
+
+library(dplyr)
+library(ggcorrplot)
+library(isoRouting)
+
+# Load the bundled package data
+data("hvac_features", package = "isoRouting")
+
+# Restrict to the core raw variables before kinematic feature engineering
+hvac_raw <- hvac_features |> 
+  select(
+    t_supply, t_return, sp_return, t_saturation, t_outdoor, 
+    rh_supply, rh_return, rh_outdoor, energy, power
+  )
+
+# Calculate correlation matrix
+cor_matrix <- cor(hvac_raw, use = "pairwise.complete.obs")
+
+# Set the diagonal to NA to de-emphasize trivial self-correlations
+diag(cor_matrix) <- NA
+
+# Generate the square ggplot-based heatmap
+ggcorrplot(
+  cor_matrix,
+  method = "square",
+  type = "full",
+  lab = TRUE,              
+  lab_size = 3.5,
+  lab_col = "black",       
+  colors = c("#f8766d", "white", "#00bfc4"), 
+  outline.color = "gray90",
+  legend.title = "Correlation"
+) +
+theme(
+  axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, face = "bold"),
+  axis.text.y = element_text(face = "bold")
+) +
+scale_y_discrete(limits = rev)
+```
+
+Based on the heatmap one could be tempted to remove some variables with high correlation and ignore low correlation coefficients. However, examining the raw pairwise dependencies reveals a much more complex geometric reality.
+
+```{r}
+#| label: fig-pairs-plot
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 12
+#| fig-height: 12
+#| fig-cap: "Scatterplot matrix with correlation-mapped backgrounds (Sampled at n=5000)"
+
+library(GGally)
+
+# 1. Custom function to calculate correlation and map it to a background color
+custom_scatter_bg <- function(data, mapping, ...) {
+  x_data <- GGally::eval_data_col(data, mapping$x)
+  y_data <- GGally::eval_data_col(data, mapping$y)
+  
+  corr <- cor(x_data, y_data, use = "pairwise.complete.obs")
+  
+  color_fun <- colorRamp(c("#f8766d", "white", "#00bfc4")) 
+  scaled_corr <- (corr + 1) / 2 
+  
+  rgb_vec <- color_fun(scaled_corr)
+  hex_color <- rgb(rgb_vec[1], rgb_vec[2], rgb_vec[3], maxColorValue = 255)
+  
+  ggplot(data, mapping) +
+    annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf, 
+             fill = hex_color, alpha = 0.4) +
+    geom_point(...)
+}
+
+# 2. Generate the plot for a representative sample using the restricted raw data
+set.seed(42)
+p_pairs <- hvac_raw |>
+  sample_n(5000) |> 
+  ggpairs(
+    lower = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
+    upper = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
+    title = "Pairwise Scatterplot Matrix (HVAC Raw Telemetry)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "gray80", fill = NA)
+  )
+
+p_pairs
+```
+
+The scatterplot matrix shows that linear correlation is an inadequate measure here. Variables form distinct geometric manifolds, dense operational clusters, and hard boundaries dictated by mechanical limits and programmed setpoints.   
+
+Explicitly modeling these dependencies using traditional parametric methods would require a prohibitive expansion of polynomial and interaction terms. 
+
+This geometric complexity is why `isoRouting` utilizes the Isolation Forest algorithm [@liu2008isolation]. Rather than attempting to explicitly model the dense, intricate topology of "normal" operations, the Isolation Forest uses non-Euclidean random partitioning to efficiently isolate anomalies that fall outside these manifolds.
+
+To make anomaly detection actionable in an operations research context, isoRouting establishes a two-tiered diagnostic framework that decouples system explanation from operational alerting:
+
+- **Archetype Discovery (Explaining Faults)**: By capturing a broader statistical substrate of anomalous time courses, the engine provides sufficient data density to map distinct operational manifolds. Clustering this substrate yields spatial medoids—the representative profiles of underlying deviations from nominal variable interactions. Rather than classifying every point in this subset as a critical failure, these profiles are used to map the distinct operating regions associated with anomalous behavior.
+- **Threshold Triggers (Alerting on Severity)**: Once the underlying behavioral departures are established, a higher anomaly score threshold is applied to govern active alerts. By restricting real-time alarms to the most extreme scores (a fraction of a percent of total observations), the system prevents operator fatigue. When an extreme alert fires, its proximity to a pre-computed medoid immediately associates it with a known fault archetype, enabling rapid root-cause diagnosis or flagging a novel anomaly type.
 
 ## Data Preparation and Temporal Integrity
 
@@ -97,8 +206,8 @@ time_diffs <- as.numeric(difftime(
   units = "secs"
 ))
 
-# Find the index of the 6-month offline period (15,814,800 seconds)
-major_gap_idx <- which(time_diffs == 15814800)
+# Dynamically find the index of the absolute largest gap (the 6-month shutdown)
+major_gap_idx <- which.max(time_diffs)
 
 # Bucket 1: Pre-Gap, ~40% of data
 baseline_telemetry <- hvac_features |> 
@@ -115,7 +224,7 @@ baseline_check <- check_time_continuity(baseline_telemetry$timestamp, tolerance 
 if (!baseline_check$is_continuous) {
   stop("Bucket 1 contains structural time discontinuities.")
 } else {
-  cat("Bucket 1 temporal integrity verified. Minor outages are within 7-day tolerance.")
+  cat("Bucket 1 temporal integrity verified. Minor outages are within 7-day tolerance.\n")
 }
 
 # Validate bucket 2: 
@@ -124,7 +233,7 @@ stream_check <- check_time_continuity(stream_telemetry$timestamp, tolerance = 60
 if (!stream_check$is_continuous) {
   stop("Bucket 2 data contains structural time discontinuities.")
 } else {
-  cat("Bucket 2 temporal integrity verified. Minor outages are within 7-day tolerance.")
+  cat("Bucket 2 temporal integrity verified. Minor outages are within 7-day tolerance.\n")
 }
 ```
 
@@ -221,16 +330,17 @@ engine@domain_state
 nrow(engine@anomalies)
 ```
 
-### Visualizing the Threshold Landscape
+## Visualizing the Threshold Landscape
 
 Before officially extracting anomalies, how do we know `0.60` is the correct threshold to define in our YAML? 
 
-Choosing an anomaly threshold requires balancing signal and noise. If the threshold is too high, we miss critical systemic faults; if it is too low, we flood the engine with minor variance, diluting the topological archetypes.
+Choosing an anomaly threshold requires balancing signal and noise. If the threshold is too high, we might miss critical systemic anomalies; if it is too low, we flood the engine with minor variance, diluting the archetypes.
 
-`isoRouting` provides the `explore_thresholds()` method to rapidly score the feature space without mutating the engine's internal state. This allows users to visualize the decay curve of extreme events and select a mathematically sound inflection point for their configuration.
+`isoRouting` provides the `explore_thresholds()` method to rapidly score the feature space without mutating the engine's internal state. This allows users to visualize the decay curve of extreme events.
 
 ```{r}
-#| label: explore-thresholds
+#| label: fig-threshold-decay
+#| fig-cap: "Anomaly threshold decay curve showing the reduction in isolated extreme events as the Isolation Forest score threshold increases."
 #| warning: false
 #| message: false
 
@@ -253,57 +363,317 @@ ggplot(threshold_curve, aes(x = Threshold, y = Event_Count)) +
   theme_minimal()
 ```
 
-### Validating Topological Stability
+## Checking Clustering Stability
 
-Before locking in our anomaly threshold, we must ensure the resulting physical archetypes are stable. It is not enough to count the number of extracted events; we must verify that the optimal number of anomaly clusters ($k_{opt}$) remains consistent across a range of thresholds. 
+Before locking in our anomaly threshold, we must ensure the resulting archetypes are stable: the optimal number of anomaly clusters ($k_{opt}$) should remain consistent across a range of thresholds. 
 
 Using `evaluate_k_stability()`, the engine scores the feature space once, iteratively subsets the anomalies across a threshold sequence, constructs the topological distance matrices, and extracts the optimal $k$ via Global Silhouette maximization for each step.
 
 ```{r}
-#| label: evaluate-stability
+#| label: fig-evaluate-stability
+#| fig-cap: "Topological stability across anomaly thresholds using raw telemetry features. The volatility across all three metrics and the low geometric effect size indicate a lack of stable anomaly archetypes."
+#| fig-height: 9
+#| fig-width: 9
 #| warning: false
 #| message: false
 library(ggplot2)
+library(dplyr)
+library(tidyr)
 
 # Sweep thresholds from 0.57 to 0.67 to test structural stability
-stability_curve <- evaluate_k_stability(engine, thresholds = seq(0.57, 0.67, by = 0.005), max_k = 10)
+stability_curve <- evaluate_k_stability(engine, thresholds = seq(0.57, 0.67, by = 0.0025), max_k = 10)
 
-max_k <- 10
-# Plot the optimal K plateau
-ggplot(stability_curve, aes(x = Threshold, y = Opt_k)) +
-  geom_line(linewidth = 1.2, color = "#0072B2") +
-  geom_point(size = 3, color = "#0072B2") +
-  scale_y_continuous(breaks = seq(2, max_k, by = 1), limits = c(2, max_k)) +
+# Pivot the profile dataframe for multi-panel plotting
+plot_data <- stability_curve |>
+  pivot_longer(cols = c(N_Anomalies, Opt_k, Hartigans_D), names_to = "Metric", values_to = "Value") |>
+  mutate(Metric = factor(Metric, levels = c("N_Anomalies", "Hartigans_D", "Opt_k")))
+
+# Identify the maximum Hartigan's D for highlighting
+max_dip <- plot_data |>
+  filter(Metric == "Hartigans_D") |>
+  filter(Value == max(Value, na.rm = TRUE)) |>
+  slice(1)
+
+# Plot the 3-panel stability profile
+ggplot(plot_data, aes(x = Threshold, y = Value, color = Metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_point(data = max_dip, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
+  facet_wrap(
+    ~Metric, 
+    scales = "free_y", 
+    ncol = 1,
+    labeller = as_labeller(c(
+      N_Anomalies = "Number of Anomalies (N)",
+      Hartigans_D = "Cluster Effect Size (Hartigan's Dip Statistic)", 
+      Opt_k = "Optimal Clusters (k)"
+    ))
+  ) +
+  scale_color_manual(values = c(
+    "N_Anomalies" = "#0072B2", 
+    "Hartigans_D" = "#009E73", 
+    "Opt_k" = "#D55E00"
+  )) +
+  scale_x_continuous(breaks = seq(0.57, 0.67, by = 0.01)) +
   labs(
-    title = "Topological Stability of Anomaly Archetypes",
-    subtitle = "A stable plateau would indicate robust, non-artifactual clusters",
+    title = "Stability of Anomaly Archetypes (Naive Configuration)",
+    subtitle = "Volatility and low effect sizes indicate a lack of robust physical clusters",
     x = "Anomaly Threshold",
-    y = "Optimal Number of Clusters (k)"
+    y = NULL
   ) +
   theme_minimal(base_size = 12) +
-  theme(panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"))
+  theme(
+    panel.grid.minor = element_blank(), 
+    plot.title = element_text(face = "bold"),
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 11)
+  )
 ```
-
-### Quantifying Topological Instability
-
-Visual inspection of the $k_{opt}$ profile suggests a highly volatile topology, but we can rigorously quantify this instability by examining the step-by-step variance across the threshold continuum. 
-
-Standard variance metrics like standard deviation are inappropriate here because they ignore the sequential nature of the thresholds. Instead, we can calculate the discrete first derivative of the $k_{opt}$ sequence—measuring exactly how many clusters are created or destroyed with every 0.005 adjustment to the threshold.
 
 ```{r}
-#| label: quantify-instability
+#| label: max-D
+#| echo: false
+# Extract the number of anomalies at the maximum Hartigan's D
+N_maxD <- stability_curve |>
+  dplyr::filter(Hartigans_D == max(Hartigans_D, na.rm = TRUE)) |>
+  dplyr::pull(N_Anomalies) |>
+  dplyr::first()
+```
+
+In addition to the profile of optimal cluster count $k$, method `evaluate_k_stability` of `isoRouting` also computes two other profiles displayed in @fig-evaluate-stability:
+- The number $N$ of anomalies as a function of the anomaly score threshold. This is helpful to detect clustering over a small $N$.
+- A profile of clustering-independent non-parametric test effect size: Hartigan's Dip Statistic $D$ [@hartigan1985dip]. This test is applied to the elements of the underlying Hamming distance matrix and tests the hypothesis of unimodality. So, a large $D$ rejects the unimodal hypothesis and indicates the presence of at least two groups of distances, thus suggesting the presence of coherent clusters. 
+
+@fig-evaluate-stability reveals a lack of robust archetypes in the naive configuration. Although the algorithm temporarily stabilizes at $k=4$ across the mid-range thresholds, the accompanying $D$ Statistic remains low. This indicates that while the space can be divided into four quadrants, the clusters bleed into one another without distinct physical separation. The only substantial increase in geometric structure occurs above a threshold of 0.65; however, as the top panel demonstrates, this spike is likely a mathematical artifact caused by the sample size ($N$) falling to $N$ = `r N_maxD`.
+
+We conclude here that utilizing the raw features of the Turin dataset with `isoRouting` does not yield stable clustering of anomalies.
+
+## Engineering Features for the Turin HVAC dataset
+
+The lack of stable clustering using raw features indicates that absolute sensor values do not adequately capture the distinct operational states of the physical system. To identify features that better represent the underlying mechanics, we examine a multi-day time course of the raw telemetry.
+
+```{r}
+#| label: fig-data-exploration-all
 #| warning: false
 #| message: false
+#| echo: false
+#| fig-width: 10
+#| fig-height: 12
+#| fig-cap: "1-Week Time Course of All System Variables"
 
-# Calculate the absolute step differences (discrete derivative)
-k_jumps <- abs(diff(stability_curve$Opt_k))
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(isoRouting)
 
-# Calculate instability metrics
-masd <- mean(k_jumps)
-max_jump <- max(k_jumps)
-max_plateau <- max(rle(stability_curve$Opt_k)$lengths)
+# 1. Load the bundled package data
+data("hvac_features", package = "isoRouting")
 
-cat(sprintf("Mean Absolute Step Difference: %.2f clusters\n", masd))
-cat(sprintf("Maximum Single Step Jump: %d clusters\n", max_jump))
-cat(sprintf("Maximum Stable Plateau: %d steps\n", max_plateau))
+# 2. Instantiate the engine and ingest data strictly through the API
+# (Assumes config_naive is still available in the Quarto environment)
+engine_exploratory <- new("DiagnosticEngine", config_path = config_naive)
+engine_exploratory <- ingest_time_course(engine_exploratory, data = hvac_features)
+
+# 3. Retrieve the validated telemetry using the S4 getter
+hvac_valid <- get_time_course(engine_exploratory)
+
+# 4. Extract a 1-week subset for visualization
+hvac_week <- hvac_valid |>
+  filter(
+    timestamp >= ymd("2019-11-01", tz = "UTC"), 
+    timestamp < ymd("2019-11-08", tz = "UTC")
+  ) 
+
+# 5. Pivot and plot
+hvac_plot_all <- hvac_week |>
+  pivot_longer(
+    cols = -timestamp, 
+    names_to = "Variable", 
+    values_to = "Value"
+  )
+
+ggplot(hvac_plot_all, aes(x = timestamp, y = Value, color = Variable)) +
+  geom_line(alpha = 0.8) +
+  facet_wrap(~Variable, scales = "free_y", ncol = 1) +
+  theme_minimal() +
+  labs(
+    title = "Comprehensive 1-Week HVAC Telemetry",
+    subtitle = "Turin Dataset: Nov 1 - Nov 7, 2019",
+    x = "Time", 
+    y = "Measurement"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold")
+  )
 ```
+
+The most prominent characteristics in @fig-data-exploration-all are the step changes across variables like energy, power, and t_supply. These jumps reflect the causal, closed-loop control mechanics of the HVAC system: crossing a programmed threshold triggers a quick mechanical response.
+
+These abrupt changes explain the geometric fragmentation previously observed in @fig-pairs-plot. Because the system rapidly changes between discrete operational states, the pairwise scatterplots manifest as isolated lines and dense clouds devoid of intermediate values. Since these sudden transitions drive the actual physical behavior of the unit, static values of sensor readings are insufficient. To isolate meaningful operational archetypes, we must engineer kinematic features—specifically short time derivatives—that encode these rates of change [@blazquez2021review; @cook2019anomaly].
+
+```{r}
+#| label: fig-baseline-topology-highres
+#| fig-cap: "Topological Validation of Baseline Configuration (Target Plateau: k=4)"
+#| fig-height: 9
+#| fig-width: 9
+#| message: false
+#| warning: false
+
+library(isoRouting)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(diptest)
+
+yaml_baseline <- "
+ntrees: 500
+sample_size: 256
+temporal_window_hours: 2
+anomaly_threshold: 0.60
+target_variables:
+  - delta_t
+  - delta_rh
+  - delta_t_deriv_15m
+context_variables:
+  - power
+  - t_outdoor
+  - rh_outdoor
+  - t_supply
+  - t_return
+  - sp_return
+"
+config_base <- tempfile(pattern = "config_base_", fileext = ".yml")
+writeLines(yaml_baseline, config_base)
+
+engine_base <- new("DiagnosticEngine", config_path = config_base)
+engine_base <- ingest_time_course(engine_base, data = baseline_telemetry)
+
+res_base <- evaluate_k_stability(
+  engine_base, 
+  thresholds = seq(0.57, 0.72, by = 0.0025),
+  min_k = 2,
+  max_k = 10
+)
+
+plot_base <- res_base |>
+  pivot_longer(cols = c(N_Anomalies, Opt_k, Hartigans_D), names_to = "Metric", values_to = "Value") |>
+  mutate(Metric = factor(Metric, levels = c("N_Anomalies", "Hartigans_D", "Opt_k")))
+
+max_dip_base <- plot_base |>
+  filter(Metric == "Hartigans_D") |>
+  filter(Value == max(Value, na.rm = TRUE)) |>
+  slice(1)
+
+ggplot(plot_base, aes(x = Threshold, y = Value, color = Metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_point(data = max_dip_base, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
+  facet_wrap(
+    ~Metric, 
+    scales = "free_y", 
+    ncol = 1,
+    labeller = as_labeller(c(
+      N_Anomalies = "Number of Anomalies (N)",
+      Hartigans_D = "Cluster Effect Size (Hartigan's Dip Statistic)", 
+      Opt_k = "Optimal Clusters (k)"
+    ))
+  ) +
+  # Added a distinct blue for the N_Anomalies trace
+  scale_color_manual(values = c("N_Anomalies" = "#0072B2", "Hartigans_D" = "#009E73", "Opt_k" = "#D55E00")) +
+  scale_x_continuous(breaks = seq(0.57, 0.72, by = 0.01)) +
+  labs(
+    title = "Topological Validation: Baseline Configuration",
+    subtitle = "Target Variables: delta_t, delta_rh, delta_t_deriv_15m",
+    x = "Anomaly Threshold",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(), 
+    plot.title = element_text(face = "bold"),
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 11)
+  )
+```
+
+```{r}
+#| label: fig-experimental-topology-highres
+#| fig-cap: "Topological Validation of Experimental Configuration (Testing power_deriv_15m)"
+#| fig-height: 9
+#| fig-width: 9
+#| message: false
+#| warning: false
+
+yaml_exp <- "
+ntrees: 500
+sample_size: 256
+temporal_window_hours: 2
+anomaly_threshold: 0.60
+target_variables:
+  - delta_t
+  - delta_rh
+  - delta_t_deriv_15m
+  - power_deriv_15m
+context_variables:
+  - power
+  - t_outdoor
+  - rh_outdoor
+  - t_supply
+  - t_return
+  - sp_return
+"
+config_exp <- tempfile(pattern = "config_exp_", fileext = ".yml")
+writeLines(yaml_exp, config_exp)
+
+engine_exp <- new("DiagnosticEngine", config_path = config_exp)
+engine_exp <- ingest_time_course(engine_exp, data = baseline_telemetry)
+
+res_exp <- evaluate_k_stability(
+  engine_exp, 
+  thresholds = seq(0.57, 0.72, by = 0.0025),
+  min_k = 2,
+  max_k = 10
+)
+
+plot_exp <- res_exp |>
+  pivot_longer(cols = c(N_Anomalies, Opt_k, Hartigans_D), names_to = "Metric", values_to = "Value") |>
+  mutate(Metric = factor(Metric, levels = c("N_Anomalies", "Hartigans_D", "Opt_k")))
+
+max_dip_exp <- plot_exp |>
+  filter(Metric == "Hartigans_D") |>
+  filter(Value == max(Value, na.rm = TRUE)) |>
+  slice(1)
+
+ggplot(plot_exp, aes(x = Threshold, y = Value, color = Metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_point(data = max_dip_exp, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
+  facet_wrap(
+    ~Metric, 
+    scales = "free_y", 
+    ncol = 1,
+    labeller = as_labeller(c(
+      N_Anomalies = "Number of Anomalies (N)",
+      Hartigans_D = "Cluster Effect Size (Hartigan's Dip Statistic)", 
+      Opt_k = "Optimal Clusters (k)"
+    ))
+  ) +
+  scale_color_manual(values = c("N_Anomalies" = "#0072B2", "Hartigans_D" = "#009E73", "Opt_k" = "#D55E00")) +
+  scale_x_continuous(breaks = seq(0.57, 0.72, by = 0.01)) +
+  labs(
+    title = "Topological Validation: Experimental Configuration",
+    subtitle = "Target Variables: Base + power_deriv_15m",
+    x = "Anomaly Threshold",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(), 
+    plot.title = element_text(face = "bold"),
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 11)
+  )
+```
+
