@@ -169,16 +169,41 @@ setGeneric("get_time_course", function(object) standardGeneric("get_time_course"
 #' @export
 setGeneric("explore_thresholds", function(object, thresholds = seq(0.50, 0.80, by = 0.01), ntrees = NULL, sample_size = NULL) standardGeneric("explore_thresholds"))
 
-#' @title Evaluate K-Stability Across Thresholds
-#' @description Iteratively computes topological distance and cluster calibration across a sequence of 
-#' anomaly thresholds to test the stability of physical fault archetypes.
-#' @param object A DiagnosticEngine object.
-#' @param thresholds Numeric vector of thresholds to test.
-#' @param min_k Integer. Minimum clusters to test per threshold. Default is 2.
-#' @param max_k Integer. Maximum clusters to test per threshold. Default is 8.
-#' @return A data.frame mapping thresholds to anomaly counts and optimal k-values.
+#' Evaluate Topological Stability of Clusters Across Anomaly Thresholds
+#'
+#' Sweeps a range of anomaly thresholds defined by sample size bounds (`max_N` and `min_N`) 
+#' to evaluate the structural stability of the clustering manifold. To optimize performance, 
+#' a master distance matrix is computed once at `max_N` and instantaneously subsetted 
+#' for higher thresholds.
+#'
+#' @param object A \code{DiagnosticEngine} object.
+#' @param max_N Integer. The maximum number of anomalies to evaluate (defines the lower threshold bound).
+#' @param min_N Integer. The minimum number of anomalies to evaluate (defines the upper threshold bound).
+#' @param nb_steps Integer. The number of discrete threshold steps to evaluate between the bounds. Default is 50.
+#' @param min_k Integer. The minimum number of clusters to evaluate during DIANA partitioning. Default is 2.
+#' @param max_k Integer. The maximum number of clusters to evaluate during DIANA partitioning. Default is 10.
+#'
+#' @return A \code{data.frame} containing the stability profile with columns: \code{Threshold}, 
+#' \code{N_Anomalies}, \code{Opt_k}, \code{Max_Silhouette}, and \code{Hartigans_D}.
 #' @export
-setGeneric("evaluate_k_stability", function(object, thresholds = seq(0.55, 0.70, by = 0.01), min_k = 2, max_k = 8) standardGeneric("evaluate_k_stability"))
+setGeneric("evaluate_k_stability", function(object, max_N, min_N, nb_steps = 50, min_k = 2, max_k = 10) {
+  standardGeneric("evaluate_k_stability")
+})
+
+#' Retrieve Anomaly Score Threshold for a Target Sample Size
+#'
+#' Identifies the exact anomaly score threshold required to isolate the top \code{n} 
+#' most anomalous observations. If anomaly scores have not yet been computed in the 
+#' \code{DiagnosticEngine}, a temporary model is trained using the initialized hyperparameters.
+#'
+#' @param object A \code{DiagnosticEngine} object.
+#' @param n Integer. The target number of top anomalies to isolate.
+#'
+#' @return Numeric. The anomaly score threshold corresponding to the target sample size.
+#' @export
+setGeneric("get_threshold_at_N", function(object, n) {
+  standardGeneric("get_threshold_at_N")
+})
 
 # --- INITIALIZATION METHOD ---
 
@@ -581,6 +606,29 @@ setMethod("commit_ledger", "DiagnosticEngine", function(object, k) {
 })
 
 #' @export
+setMethod("explore_thresholds", "DiagnosticEngine", function(object, thresholds, ntrees, sample_size) {
+  if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
+    stop("Fatal Error: Time course must be ingested before exploring thresholds.")
+  }
+  
+  hyps <- object@hyperparameters
+  if (is.null(ntrees)) ntrees <- hyps$ntrees
+  if (is.null(sample_size)) sample_size <- hyps$sample_size
+  
+  message("Scoring feature space to build threshold curve...")
+  set.seed(42)
+  actual_size <- min(sample_size, nrow(object@feature_matrix))
+  
+  iso_model <- suppressWarnings(isotree::isolation.forest(
+    object@feature_matrix, ntrees = ntrees, sample_size = actual_size, missing_action = "fail"
+  ))
+  scores <- stats::predict(iso_model, object@feature_matrix)
+  
+  counts <- purrr::map_int(thresholds, ~sum(scores >= .x))
+  return(data.frame(Threshold = thresholds, Event_Count = counts))
+})
+
+#' @export
 setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
   # Ensure the engine is fully calibrated and medoids are locked
   if (nrow(object@baseline_signatures) == 0) {
@@ -649,30 +697,7 @@ setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
 })
 
 #' @export
-setMethod("explore_thresholds", "DiagnosticEngine", function(object, thresholds, ntrees, sample_size) {
-  if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
-    stop("Fatal Error: Time course must be ingested before exploring thresholds.")
-  }
-  
-  hyps <- object@hyperparameters
-  if (is.null(ntrees)) ntrees <- hyps$ntrees
-  if (is.null(sample_size)) sample_size <- hyps$sample_size
-  
-  message("Scoring feature space to build threshold curve...")
-  set.seed(42)
-  actual_size <- min(sample_size, nrow(object@feature_matrix))
-  
-  iso_model <- suppressWarnings(isotree::isolation.forest(
-    object@feature_matrix, ntrees = ntrees, sample_size = actual_size, missing_action = "fail"
-  ))
-  scores <- stats::predict(iso_model, object@feature_matrix)
-  
-  counts <- purrr::map_int(thresholds, ~sum(scores >= .x))
-  return(data.frame(Threshold = thresholds, Event_Count = counts))
-})
-
-#' @export
-setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, thresholds, min_k, max_k) {
+setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, min_N, nb_steps = 50, min_k = 2, max_k = 10) {
   if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
     stop("Fatal Error: Time course must be ingested before evaluating k-stability.")
   }
@@ -693,8 +718,26 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, threshold
   base_data <- object@raw_time_course
   base_data$anomaly_score <- scores
   
+  # --- 1. DETERMINE THRESHOLD BOUNDS FROM N ---
+  sorted_scores <- sort(scores, decreasing = TRUE)
+  total_obs <- length(scores)
+  
+  actual_max_N <- min(max_N, total_obs)
+  actual_min_N <- min(min_N, actual_max_N)
+  
+  if (actual_min_N <= max_k) {
+    warning(sprintf("min_N (%d) is too small for max_k (%d). Adjusting min_N to %d.", actual_min_N, max_k, max_k + 1))
+    actual_min_N <- max_k + 1
+  }
+  
+  t_min <- sorted_scores[actual_max_N]
+  t_max <- sorted_scores[actual_min_N]
+  thresholds <- seq(t_min, t_max, length.out = nb_steps)
+  
+  # --- 2. EXECUTE STABLE SWEEP ---
   results_list <- list()
   
+  message("Sweeping threshold interval...")
   for (th in thresholds) {
     idx <- which(scores >= th)
     
@@ -718,7 +761,14 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, threshold
     
     # --- CALCULATE HARTIGAN'S DIP STATISTIC (D) ---
     d_mat <- tmp_engine@distance_matrix
-    d_vec <- d_mat[upper.tri(d_mat)]
+    
+    # Safely handle 'dist' vs 'matrix' format dynamically
+    if (inherits(d_mat, "dist")) {
+      d_mat_square <- as.matrix(d_mat)
+      d_vec <- d_mat_square[upper.tri(d_mat_square)]
+    } else {
+      d_vec <- d_mat[upper.tri(d_mat)]
+    }
     
     if (length(d_vec) >= 4) {
       dip_stat <- diptest::dip(d_vec)

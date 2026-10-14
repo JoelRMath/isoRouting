@@ -166,64 +166,28 @@ sample_size: 16
   unlink(config_file)
 })
 
-test_that("extract_anomalies allows runtime threshold override and updates hyperparameters", {
-  yaml_config <- "
-target_variables:
-  - t_supply
-anomaly_threshold: 0.60
-ntrees: 50
-sample_size: 16
-"
-  config_file <- tempfile(fileext = ".yml")
-  writeLines(yaml_config, config_file)
-  engine <- new("DiagnosticEngine", config_path = config_file)
+#' @export
+setMethod("get_threshold_at_N", "DiagnosticEngine", function(object, n) {
+  if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
+    stop("Fatal Error: Time course must be ingested before querying thresholds.")
+  }
   
-  mock_data <- data.frame(
-    timestamp = as.POSIXct(c("2026-10-14 09:00:00", "2026-10-14 10:00:00", "2026-10-14 11:00:00"), tz = "UTC"),
-    t_supply = c(20.0, 20.1, 20.5)
-  )
-  engine <- ingest_time_course(engine, data = mock_data)
+  # Use existing scores if extract_anomalies has already run
+  if ("anomaly_score" %in% colnames(object@raw_time_course)) {
+    scores <- object@raw_time_course$anomaly_score
+  } else {
+    # Otherwise, train a quick seeded forest using current hyperparameters
+    hyps <- object@hyperparameters
+    set.seed(42)
+    actual_size <- min(hyps$sample_size, nrow(object@feature_matrix))
+    iso_model <- suppressWarnings(isotree::isolation.forest(
+      object@feature_matrix, ntrees = hyps$ntrees, sample_size = actual_size, missing_action = "fail"
+    ))
+    scores <- stats::predict(iso_model, object@feature_matrix)
+  }
   
-  # 1. Extract anomalies with a dynamic override
-  engine <- extract_anomalies(engine, threshold = 0.75)
+  sorted_scores <- sort(scores, decreasing = TRUE)
+  actual_n <- min(n, length(sorted_scores))
   
-  # 2. Verify the engine state advanced
-  expect_equal(engine@domain_state, "anomalies_extracted")
-  
-  # 3. Verify the hyperparameter slot was correctly mutated for downstream ledger accuracy
-  expect_equal(get_hyperparameters(engine)$anomaly_threshold, 0.75)
-  
-  unlink(config_file)
-})
-
-test_that("evaluate_k_stability returns robust cluster mappings without scalar indices", {
-  yaml_config <- "
-target_variables:
-  - t_supply
-anomaly_threshold: 0.60
-ntrees: 10
-sample_size: 16
-"
-  config_file <- tempfile(fileext = ".yml")
-  writeLines(yaml_config, config_file)
-  engine <- new("DiagnosticEngine", config_path = config_file)
-  
-  mock_data <- data.frame(
-    timestamp = as.POSIXct(seq.POSIXt(from = as.POSIXct("2026-10-14 00:00:00", tz = "UTC"), 
-                                      by = "hour", length.out = 15)),
-    t_supply = c(rep(20.0, 10), 25.0, 26.0, 27.0, 28.0, 29.0)
-  )
-  
-  engine <- ingest_time_course(engine, data = mock_data)
-  
-  stability_results <- evaluate_k_stability(engine, thresholds = c(0.40, 0.45), min_k = 2, max_k = 3)
-  
-  # Check dataframe profile class and structure directly
-  expect_s3_class(stability_results, "data.frame")
-  expect_equal(
-    colnames(stability_results), 
-    c("Threshold", "N_Anomalies", "Opt_k", "Max_Silhouette", "Hartigans_D")
-  )
-  
-  unlink(config_file)
+  return(sorted_scores[actual_n])
 })

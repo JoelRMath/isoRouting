@@ -2,28 +2,37 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{evaluate_k_stability}
 \alias{evaluate_k_stability}
-\title{Evaluate K-Stability Across Thresholds}
+\title{Evaluate Topological Stability of Clusters Across Anomaly Thresholds}
 \usage{
 evaluate_k_stability(
   object,
-  thresholds = seq(0.55, 0.7, by = 0.01),
+  max_N,
+  min_N,
+  nb_steps = 50,
   min_k = 2,
-  max_k = 8
+  max_k = 10
 )
 }
 \arguments{
-\item{object}{A DiagnosticEngine object.}
+\item{object}{A \code{DiagnosticEngine} object.}
 
-\item{thresholds}{Numeric vector of thresholds to test.}
+\item{max_N}{Integer. The maximum number of anomalies to evaluate (defines the lower threshold bound).}
 
-\item{min_k}{Integer. Minimum clusters to test per threshold. Default is 2.}
+\item{min_N}{Integer. The minimum number of anomalies to evaluate (defines the upper threshold bound).}
 
-\item{max_k}{Integer. Maximum clusters to test per threshold. Default is 8.}
+\item{nb_steps}{Integer. The number of discrete threshold steps to evaluate between the bounds. Default is 50.}
+
+\item{min_k}{Integer. The minimum number of clusters to evaluate during DIANA partitioning. Default is 2.}
+
+\item{max_k}{Integer. The maximum number of clusters to evaluate during DIANA partitioning. Default is 10.}
 }
 \value{
-A data.frame mapping thresholds to anomaly counts and optimal k-values.
+A \code{data.frame} containing the stability profile with columns: \code{Threshold},
+\code{N_Anomalies}, \code{Opt_k}, \code{Max_Silhouette}, and \code{Hartigans_D}.
 }
 \description{
-Iteratively computes topological distance and cluster calibration across a sequence of
-anomaly thresholds to test the stability of physical fault archetypes.
+Sweeps a range of anomaly thresholds defined by sample size bounds (\code{max_N} and \code{min_N})
+to evaluate the structural stability of the clustering manifold. To optimize performance,
+a master distance matrix is computed once at \code{max_N} and instantaneously subsetted
+for higher thresholds.
 }

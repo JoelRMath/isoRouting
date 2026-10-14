@@ -380,8 +380,9 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 
-# Sweep thresholds from 0.57 to 0.67 to test structural stability
-stability_curve <- evaluate_k_stability(engine, thresholds = seq(0.57, 0.67, by = 0.0025), max_k = 10)
+# Sweep based on statistical substrate size (N) instead of arbitrary thresholds
+# N=850 roughly corresponds to the old T=0.57, and N=30 to T=0.67
+stability_curve <- evaluate_k_stability(engine, max_N = 850, min_N = 30, nb_steps = 41, max_k = 10)
 
 # Pivot the profile dataframe for multi-panel plotting
 plot_data <- stability_curve |>
@@ -414,7 +415,8 @@ ggplot(plot_data, aes(x = Threshold, y = Value, color = Metric)) +
     "Hartigans_D" = "#009E73", 
     "Opt_k" = "#D55E00"
   )) +
-  scale_x_continuous(breaks = seq(0.57, 0.67, by = 0.01)) +
+  # Dynamically generate breaks since threshold bounds are now driven by N
+  scale_x_continuous(n.breaks = 10) +
   labs(
     title = "Stability of Anomaly Archetypes (Naive Configuration)",
     subtitle = "Volatility and low effect sizes indicate a lack of robust physical clusters",
@@ -550,9 +552,12 @@ writeLines(yaml_baseline, config_base)
 engine_base <- new("DiagnosticEngine", config_path = config_base)
 engine_base <- ingest_time_course(engine_base, data = baseline_telemetry)
 
+# Swapped exact thresholds for statistical substrate bounds (N)
 res_base <- evaluate_k_stability(
   engine_base, 
-  thresholds = seq(0.57, 0.72, by = 0.0025),
+  max_N = 850, 
+  min_N = 30, 
+  nb_steps = 61,
   min_k = 2,
   max_k = 10
 )
@@ -580,9 +585,9 @@ ggplot(plot_base, aes(x = Threshold, y = Value, color = Metric)) +
       Opt_k = "Optimal Clusters (k)"
     ))
   ) +
-  # Added a distinct blue for the N_Anomalies trace
   scale_color_manual(values = c("N_Anomalies" = "#0072B2", "Hartigans_D" = "#009E73", "Opt_k" = "#D55E00")) +
-  scale_x_continuous(breaks = seq(0.57, 0.72, by = 0.01)) +
+  # Use dynamic breaks since threshold values are dynamically extracted from N
+  scale_x_continuous(n.breaks = 10) +
   labs(
     title = "Topological Validation: Baseline Configuration",
     subtitle = "Target Variables: delta_t, delta_rh, delta_t_deriv_15m",
@@ -630,9 +635,12 @@ writeLines(yaml_exp, config_exp)
 engine_exp <- new("DiagnosticEngine", config_path = config_exp)
 engine_exp <- ingest_time_course(engine_exp, data = baseline_telemetry)
 
+# Swapped exact thresholds for statistical substrate bounds (N)
 res_exp <- evaluate_k_stability(
   engine_exp, 
-  thresholds = seq(0.57, 0.72, by = 0.0025),
+  max_N = 850, 
+  min_N = 30, 
+  nb_steps = 61,
   min_k = 2,
   max_k = 10
 )
@@ -661,7 +669,8 @@ ggplot(plot_exp, aes(x = Threshold, y = Value, color = Metric)) +
     ))
   ) +
   scale_color_manual(values = c("N_Anomalies" = "#0072B2", "Hartigans_D" = "#009E73", "Opt_k" = "#D55E00")) +
-  scale_x_continuous(breaks = seq(0.57, 0.72, by = 0.01)) +
+  # Use dynamic breaks since threshold values are dynamically extracted from N
+  scale_x_continuous(n.breaks = 10) +
   labs(
     title = "Topological Validation: Experimental Configuration",
     subtitle = "Target Variables: Base + power_deriv_15m",
