@@ -5,14 +5,10 @@
 \title{Get Ingested Time Course}
 \usage{
 get_time_course(object)
-
-get_time_course(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}
 }
 \description{
-Returns the schema-validated raw time course data.
-
 Returns the schema-validated raw time course data.
 }

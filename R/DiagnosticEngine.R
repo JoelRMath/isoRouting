@@ -153,12 +153,6 @@ setGeneric("predict_stream", function(object, new_data) standardGeneric("predict
 #' @export
 setGeneric("get_time_course", function(object) standardGeneric("get_time_course"))
 
-#' @title Get Ingested Time Course
-#' @description Returns the schema-validated raw time course data.
-#' @param object A DiagnosticEngine object.
-#' @export
-setGeneric("get_time_course", function(object) standardGeneric("get_time_course"))
-
 #' @title Explore Anomaly Thresholds
 #' @description Rapidly scores the feature space and returns a mapping of 
 #' anomaly thresholds to the number of extracted events.
@@ -204,6 +198,7 @@ setGeneric("evaluate_k_stability", function(object, max_N, min_N, nb_steps = 50,
 setGeneric("get_threshold_at_N", function(object, n) {
   standardGeneric("get_threshold_at_N")
 })
+
 
 # --- INITIALIZATION METHOD ---
 
@@ -696,6 +691,25 @@ setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
   return(results_df)
 })
 
+#' @title Evaluate k-Cluster Stability Across Anomaly Thresholds
+#' @description Sweeps across a dynamically determined range of anomaly thresholds (based on 
+#' bounding sample sizes `max_N` and `min_N`) to compute topological and clustering stability metrics. 
+#' Extracts the optimal k, maximum global silhouette, Hartigan's Dip statistic, and 
+#' Local Intrinsic Dimensionality (LID) profiles for each threshold step.
+#' @param object A populated `DiagnosticEngine` object (must have ingested a time course).
+#' @param max_N Integer. The maximum number of anomalies to evaluate (sets the lower threshold bound).
+#' @param min_N Integer. The minimum number of anomalies to evaluate (sets the upper threshold bound).
+#' @param nb_steps Integer. The number of evenly spaced threshold steps to evaluate. Default is 50.
+#' @param min_k Integer. The minimum number of clusters to test during calibration. Default is 2.
+#' @param max_k Integer. The maximum number of clusters to test during calibration. Default is 10.
+#' @return A data frame containing the sweep results: Threshold, N_Anomalies, Opt_k, Max_Silhouette, 
+#' Hartigans_D, Global_LID, Min_Cluster_LID, and Max_Cluster_LID.
+#' @export
+setGeneric("evaluate_k_stability", function(object, max_N, min_N, nb_steps = 50, min_k = 2, max_k = 10) {
+  standardGeneric("evaluate_k_stability")
+})
+
+#' @rdname evaluate_k_stability
 #' @export
 setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, min_N, nb_steps = 50, min_k = 2, max_k = 10) {
   if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
@@ -745,7 +759,8 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, mi
     if (length(idx) <= max_k) {
       results_list[[as.character(th)]] <- data.frame(
         Threshold = th, N_Anomalies = length(idx), Opt_k = NA_real_, 
-        Max_Silhouette = NA_real_, Hartigans_D = NA_real_
+        Max_Silhouette = NA_real_, Hartigans_D = NA_real_,
+        Global_LID = NA_real_, Min_Cluster_LID = NA_real_, Max_Cluster_LID = NA_real_
       )
       next
     }
@@ -759,23 +774,17 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, mi
     # Suppress console flood during iterative calibration
     tmp_engine <- suppressMessages(compute_distances(tmp_engine))
     
-    # --- CALCULATE HARTIGAN'S DIP STATISTIC (D) ---
     d_mat <- tmp_engine@distance_matrix
     
-    # Safely handle 'dist' vs 'matrix' format dynamically
+    # Retain square matrix coercion for the LID helper
     if (inherits(d_mat, "dist")) {
       d_mat_square <- as.matrix(d_mat)
-      d_vec <- d_mat_square[upper.tri(d_mat_square)]
     } else {
-      d_vec <- d_mat[upper.tri(d_mat)]
+      d_mat_square <- d_mat 
     }
     
-    if (length(d_vec) >= 4) {
-      dip_stat <- diptest::dip(d_vec)
-    } else {
-      dip_stat <- NA_real_
-    }
-    # ---------------------------------------------------
+    # --- CALCULATE HARTIGAN'S DIP STATISTIC (D) ---
+    dip_stat <- compute_dip_statistic(d_mat)
     
     tmp_engine <- suppressMessages(calibrate(tmp_engine, min_k = min_k, max_k = max_k))
     
@@ -791,13 +800,81 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, mi
       max_sil <- NA_real_
     }
     
+    # --- CALCULATE LOCAL INTRINSIC DIMENSIONALITY (LID) ---
+    if (!is.na(opt_k)) {
+      lbls <- stats::cutree(tmp_engine@hierarchical_tree, k = opt_k)
+      
+      lid_res <- compute_lid_profile(d_mat_square, cluster_labels = lbls, k = 5)
+      
+      global_lid <- lid_res$Global_LID
+      min_lid <- lid_res$Min_Cluster_LID
+      max_lid <- lid_res$Max_Cluster_LID
+    } else {
+      global_lid <- NA_real_
+      min_lid <- NA_real_
+      max_lid <- NA_real_
+    }
+    
     results_list[[as.character(th)]] <- data.frame(
       Threshold = th, N_Anomalies = length(idx), Opt_k = opt_k, 
-      Max_Silhouette = max_sil, Hartigans_D = dip_stat
+      Max_Silhouette = max_sil, Hartigans_D = dip_stat,
+      Global_LID = global_lid, Min_Cluster_LID = min_lid, Max_Cluster_LID = max_lid
     )
   }
   
   res_df <- dplyr::bind_rows(results_list)
   
   return(res_df)
+})
+
+#' Retrieve Anomaly Score Threshold for a Target Sample Size
+#'
+#' Identifies the exact anomaly score threshold required to isolate the top \code{n} 
+#' most anomalous observations. If anomaly scores have not yet been computed in the 
+#' \code{DiagnosticEngine}, a temporary model is trained using the initialized hyperparameters.
+#'
+#' @param object A \code{DiagnosticEngine} object.
+#' @param n Integer. The target number of top anomalies to isolate.
+#'
+#' @return Numeric. The anomaly score threshold corresponding to the target sample size. 
+#' Note: Due to potential ties in Isolation Forest scores, filtering a dataset with 
+#' \code{score >= threshold} will return \strong{at least} \code{n} elements.
+#' @export
+setGeneric("get_threshold_at_N", function(object, n) {
+  standardGeneric("get_threshold_at_N")
+})
+
+#' @rdname get_threshold_at_N
+#' @export
+setMethod("get_threshold_at_N", signature("DiagnosticEngine"), function(object, n) {
+  features <- object@feature_matrix
+  n_rows <- nrow(features)
+  
+  if (n_rows == 0) {
+    stop("Feature matrix is empty. Please ingest data first.")
+  }
+  
+  if (n > n_rows) {
+    warning(sprintf("Requested n (%d) exceeds dataset size (%d). Returning minimum anomaly score.", n, n_rows))
+    n <- n_rows
+  }
+  
+  hyps <- object@hyperparameters
+  actual_size <- min(hyps$sample_size, n_rows)
+  
+  # Set seed to ensure consistency with stability sweep logic
+  set.seed(42)
+  temp_model <- suppressWarnings(
+    isotree::isolation.forest(
+      features, 
+      ntrees = hyps$ntrees, 
+      sample_size = actual_size, 
+      missing_action = "fail"
+    )
+  )
+  
+  scores <- stats::predict(temp_model, features)
+  sorted_scores <- sort(scores, decreasing = TRUE)
+  
+  return(sorted_scores[n])
 })

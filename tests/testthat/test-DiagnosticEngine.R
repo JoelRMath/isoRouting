@@ -191,3 +191,110 @@ setMethod("get_threshold_at_N", "DiagnosticEngine", function(object, n) {
   
   return(sorted_scores[actual_n])
 })
+
+test_that("evaluate_k_stability enforces domain state requirements", {
+  # Create a dummy engine without ingesting data
+  yaml_content <- "
+  ntrees: 50
+  sample_size: 64
+  temporal_window_hours: 1
+  anomaly_threshold: 0.5
+  target_variables: [var1]
+  context_variables: []
+  "
+  tmp_yml <- tempfile(fileext = ".yml")
+  writeLines(yaml_content, tmp_yml)
+  
+  engine_empty <- new("DiagnosticEngine", config_path = tmp_yml)
+  
+  expect_error(
+    evaluate_k_stability(engine_empty, max_N = 100, min_N = 30),
+    "Fatal Error: Time course must be ingested"
+  )
+})
+
+test_that("evaluate_k_stability returns expected columns and valid metrics", {
+  # Setup minimal valid engine
+  yaml_content <- "
+  ntrees: 50
+  sample_size: 64
+  temporal_window_hours: 1
+  anomaly_threshold: 0.5
+  target_variables:
+    - var1
+    - var2
+  context_variables: []
+  "
+  tmp_yml <- tempfile(fileext = ".yml")
+  writeLines(yaml_content, tmp_yml)
+  
+  set.seed(42)
+  dummy_data <- data.frame(
+    timestamp = seq(as.POSIXct("2026-01-01 00:00:00"), by = "15 mins", length.out = 300),
+    var1 = rnorm(300),
+    var2 = rnorm(300)
+  )
+  
+  engine <- new("DiagnosticEngine", config_path = tmp_yml)
+  engine <- ingest_time_course(engine, dummy_data)
+  
+  # Run a highly constrained sweep for speed
+  res <- evaluate_k_stability(
+    engine, 
+    max_N = 100, 
+    min_N = 30, 
+    nb_steps = 5, 
+    min_k = 2, 
+    max_k = 4
+  )
+  
+  # Check class and structure
+  expect_s3_class(res, "data.frame")
+  expect_equal(nrow(res), 5)
+  
+  # Check for all expected columns (including new LID metrics)
+  expected_cols <- c("Threshold", "N_Anomalies", "Opt_k", "Max_Silhouette", 
+                     "Hartigans_D", "Global_LID", "Min_Cluster_LID", "Max_Cluster_LID")
+  expect_true(all(expected_cols %in% colnames(res)))
+  
+  # Check behavioral physics of the sweep
+  expect_true(all(diff(res$Threshold) >= 0)) # Thresholds must ascend
+  expect_true(all(diff(res$N_Anomalies) <= 0)) # Anomalies must descend
+  
+  # Check metric types
+  expect_type(res$Hartigans_D, "double")
+  expect_type(res$Global_LID, "double")
+})
+
+test_that("evaluate_k_stability handles min_N bounds and early exits gracefully", {
+  # Setup minimal valid engine
+  yaml_content <- "
+  ntrees: 50
+  sample_size: 64
+  temporal_window_hours: 1
+  anomaly_threshold: 0.5
+  target_variables: [var1, var2]
+  context_variables: []
+  "
+  tmp_yml <- tempfile(fileext = ".yml")
+  writeLines(yaml_content, tmp_yml)
+  
+  set.seed(42)
+  dummy_data <- data.frame(
+    timestamp = seq(as.POSIXct("2026-01-01 00:00:00"), by = "15 mins", length.out = 100),
+    var1 = rnorm(100),
+    var2 = rnorm(100)
+  )
+  
+  engine <- new("DiagnosticEngine", config_path = tmp_yml)
+  engine <- ingest_time_course(engine, dummy_data)
+  
+  # Test warning when min_N <= max_k
+  expect_warning(
+    res_warn <- evaluate_k_stability(engine, max_N = 50, min_N = 3, nb_steps = 3, max_k = 5),
+    "min_N \\(3\\) is too small for max_k \\(5\\)\\. Adjusting min_N to 6"
+  )
+  
+  # Verify that the fallback execution still returned a valid structure
+  expect_s3_class(res_warn, "data.frame")
+})
