@@ -21,6 +21,7 @@
 #' @slot medoids list. Extracted physical archetypes representing anomaly signatures.
 #' @slot baseline_signatures matrix. Cached terminal node paths of the medoids for predictive routing.
 #' @slot active_k numeric. The mathematically validated number of fault clusters.
+#' @slot optimal_k numeric. The optimal number k of cluster (global silouhette).
 #' @slot forensic_ledger data.frame. Ranked historical ledger mapping anomalies to their medoid.
 #'
 #' @import methods
@@ -42,6 +43,7 @@ setClass(
     medoids = "list",
     baseline_signatures = "matrix",
     active_k = "numeric",
+    optimal_k = "integer",
     forensic_ledger = "data.frame"
   ),
   
@@ -122,13 +124,16 @@ setGeneric("compute_distances", function(object) standardGeneric("compute_distan
 #' @export
 setGeneric("calibrate", function(object, min_k = 2, max_k = 8) standardGeneric("calibrate"))
 
-#' @title Extract Topological Medoids
-#' @description Computes the topological center of each cluster and extracts physical time courses.
-#' @param object A DiagnosticEngine object.
-#' @param k Integer. The target number of anomaly clusters.
-#' @return An updated DiagnosticEngine object with the medoids and baseline_signatures slots populated.
+#' Extract Topological Medoids
+#' 
+#' @param object A \code{DiagnosticEngine} object.
+#' @param k Integer. The number of archetypal clusters to extract.
+#' @param threshold Numeric. Optional. The anomaly score threshold to define the statistical substrate.
+#' @param N Integer. Optional. The target number of anomalies to isolate.
 #' @export
-setGeneric("extract_medoids", function(object, k) standardGeneric("extract_medoids"))
+setGeneric("extract_medoids", function(object, threshold = NULL, N = NULL, k = NULL) {
+  standardGeneric("extract_medoids")
+})
 
 #' @title Commit Forensic Ledger
 #' @description Locks in the k-value and ranks all anomalies by their topological distance to the medoid.
@@ -236,6 +241,7 @@ setMethod("initialize", "DiagnosticEngine", function(.Object, config_path, ...) 
   }
   
   .Object <- callNextMethod(.Object, ...)
+  .Object@optimal_k <- NA_integer_
   return(.Object)
 })
 
@@ -459,6 +465,7 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
   valid_idx <- which(!is.na(results$global_silhouette))
   if (length(valid_idx) > 0) {
     best_k <- results$k[valid_idx[which.max(results$global_silhouette[valid_idx])]]
+    object@optimal_k <- as.integer(best_k)
     message(sprintf("Calibration complete. Mathematical recommendation based on maximum Global Silhouette: k=%d", best_k))
   } else {
     message("Calibration complete. No valid silhouette metrics generated (clusters too small).")
@@ -467,11 +474,59 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
   return(object)
 })
 
+
+#' Extract Topological Medoids for DiagnosticEngine
+#'
+#' Extracts archetypal time-course medoids from the anomaly topology. If a 
+#' \code{threshold} or \code{N} is provided, the method automatically extracts 
+#' the corresponding statistical substrate, computes distance matrices, and 
+#' calibrates the optimal number of clusters.
+#'
+#' @param object A \code{DiagnosticEngine} object.
+#' @param threshold Numeric. Optional. The anomaly score threshold used to define the subset of extreme events.
+#' @param N Integer. Optional. The target number of top anomalies to isolate (mapped to a threshold internally).
+#' @param k Integer. Optional. Overrides the calibrated optimal $k$ to force a specific number of clusters.
+#'
+#' @return A \code{DiagnosticEngine} object with populated \code{@medoids} and \code{@baseline_signatures} slots.
+#' @rdname extract_medoids
 #' @export
-setMethod("extract_medoids", "DiagnosticEngine", function(object, k) {
-  # Updated state checks to reflect the DS terminology
-  if (!object@domain_state %in% c("distances_computed", "calibrated", "ledger_committed")) {
-    stop("Fatal Error: Must compute distances before extracting medoids.")
+setGeneric("extract_medoids", function(object, threshold = NULL, N = NULL, k = NULL) {
+  standardGeneric("extract_medoids")
+})
+
+#' @rdname extract_medoids
+#' @export
+setMethod("extract_medoids", "DiagnosticEngine", function(object, threshold = NULL, N = NULL, k = NULL) {
+  
+  # 1. Handle dynamic subsetting
+  if (!is.null(N)) {
+    threshold <- get_threshold_at_N(object, N)
+    message(sprintf("Mapped N = %d to anomaly threshold = %.4f", N, threshold))
+  }
+  
+  if (!is.null(threshold)) {
+    message(sprintf("Slicing feature space at threshold = %.4f...", threshold))
+    object <- extract_anomalies(object, threshold = threshold)
+    object <- compute_distances(object)
+    # Always calibrate to ensure the hierarchical_tree is built for cutree
+    object <- calibrate(object)
+  } else {
+    if (!object@domain_state %in% c("distances_computed", "calibrated", "ledger_committed")) {
+      stop("Fatal Error: Must provide 'threshold' or 'N', OR manually compute distances before extracting medoids.")
+    }
+  }
+  
+  # 2. Resolve target k
+  if (is.null(k)) {
+    if (!"calibrated" %in% object@domain_state) {
+      object <- calibrate(object)
+    }
+    # Safe check for the optimal_k slot
+    if (.hasSlot(object, "optimal_k")) {
+      k <- object@optimal_k 
+    } else {
+      stop("k is NULL, but no '@optimal_k' slot exists in the object. Please explicitly provide k.")
+    }
   }
   
   message(sprintf("Extracting topological medoids for k = %d...", k))
@@ -481,7 +536,6 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, k) {
   medoid_list <- list()
   medoid_indices <- integer(k)
   
-  # Safe to assume window_hours exists due to hardened initialize()
   window_hours <- object@hyperparameters$temporal_window_hours
   
   for (c_id in 1:k) {
@@ -515,11 +569,9 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, k) {
   
   object@medoids <- medoid_list
   
-  # --- NEW: Cache baseline terminal node signatures for predict_stream ---
-  message("Caching terminal node signatures for predictive routing...")
+  # Cache baseline terminal node signatures for predict_stream 
   targets <- object@feature_schema$target_variables
   
-  # Iteratively bind the target features for medoids to ensure exact 1:k row order
   medoid_feature_data <- data.frame()
   for (idx in medoid_indices) {
     target_ts <- object@anomalies$timestamp[idx]
@@ -531,7 +583,7 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, k) {
   rownames(baseline_sigs) <- paste("Cluster", 1:k)
   object@baseline_signatures <- as.matrix(baseline_sigs)
   
-  message("Medoid extraction complete. Archetypes saved to @medoids and @baseline_signatures.")
+  message("Medoid extraction complete. Archetypes saved to @medoids.")
   
   return(object)
 })

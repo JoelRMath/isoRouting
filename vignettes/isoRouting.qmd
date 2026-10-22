@@ -421,7 +421,7 @@ cat(paste0("Threshold = ", signif(threshold, digits = 3), " yields at least 40 a
 
 These two basic methods are complemented with a more complex one presented next.
 
-## Multi-Metric Threshold Diagnostics
+## Threshold Diagnostics
 
 ```{r}
 #| label: naive-evaluate-stability
@@ -432,15 +432,15 @@ These two basic methods are complemented with a more complex one presented next.
 #| warning: false
 
 # Sweep based on statistical substrate size (N)
-stability_curve_naive <- evaluate_k_stability(engine, max_N = 600, min_N = 30, nb_steps = 61, max_k = 10)
+stability_curve_naive <- evaluate_k_stability(engine, max_N = 800, min_N = 20, nb_steps = 61, max_k = 10)
 
 ```
 
 Method `evaluate_k_stability()` maps the anomaly threshold against three independent diagnostics:
 
 - **Optimal Clusters ($k$)**: At each value of threshold $\theta$, divisive clustering [@kaufman1990finding] is utilized to group anomalies based on their Hamming distances (provided by `isotree`). The optimal number $k$ of clusters (best tree cut) is then defined as the one maximizing the global silhouette score [@rousseeuw1987silhouettes]. Visualization of $k$ as a function of $\theta$ helps identify $\theta$ intervals where clustering is stable.
-- **Hartigan's Dip Statistic ($D$)**: A non-parametric test applied to the Hamming distance matrix. A peak in $D$ rejects the hypothesis of unimodality, indicating maximum distance heterogeneity (i.e., the likely presence of highly distinct clusters) [@hartigan1985dip].
-- **Local Intrinsic Dimensionality (LID)**: Measures how many variables remain independent. A decrease in LID suggests a system "breakdown," where variables become more coupled due to a physical fault.
+- **Hartigan's Dip Statistic ($D$)**: The statistic (effect size) of a non-parametric test applied to the Hamming distance matrix. A peak in $D$ rejects the hypothesis of unimodality, indicating maximum distance heterogeneity (i.e., the likely presence of highly distinct clusters) [@hartigan1985dip].
+- **Local Intrinsic Dimensionality (LID)**: Measures how many variables remain independent. A decrease in LID suggests a system "breakdown," where variables become more coupled due to a physical fault (e.g. a sensor break will decrease variance of a variable).
 
 ```{r}
 #| label: stability-ggplot-function
@@ -539,32 +539,26 @@ fig_naive <- plot_topological_stability(
 print(fig_naive)
 ```
 
+
+@fig-naive-evaluate-stability shows candidate plateaus at $k = 4$, $k=3$ and $k=2$. We choose to ignore the plateau at $k=4$ because, while it spans the largest threshold interval, it still represents at least 200 points and its metrics $D$ and LID are not remarkable. The plateau at $k=2$ starts with the maximum $D$ value, indicating at least two very different types of distances in the Hamming matrix. The last small plateau at $k=3$ is also interesting because it indicates severe breakdown due to its small LID value.
+
+Comparing values of diagnostic metrics $D$ and LID is in itself useful. One can also ask the following question: are those values "significantly" large or small? Answering such questions requires building null models of these two metrics. We start with metric $D$ by utilizing the helper function `simulate_empirical_null_dip`.
+
 ```{r}
 #| label: naive-anomaly-thresholds
 #| code-fold: show
-#| code-summary: "Show Data Preparation"
+#| code-summary: "Show Null Dip Computation"
+#| message: false
+#| warning: false
 
 library(purrr)
 library(dplyr)
-library(isotree)
 
-# Map subset sizes (N) to precise Anomaly Thresholds for the Naive Engine
-features_naive <- engine@feature_matrix
-hyps_naive <- engine@hyperparameters
-actual_size_naive <- min(hyps_naive$sample_size, nrow(features_naive))
-set.seed(42)
-global_model_naive <- suppressWarnings(
-  isolation.forest(features_naive, ntrees = hyps_naive$ntrees, sample_size = actual_size_naive, missing_action = "fail")
-)
-scores_naive <- stats::predict(global_model_naive, features_naive)
-sorted_scores_naive <- sort(scores_naive, decreasing = TRUE)
-n_sequence <- seq(30, 100, by = 10)
-message(sprintf("Simulating empirical null space (Dip) across %d steps...", length(n_sequence)))
+n_sequence <- seq(20, 100, by = 5)
 
-# Sweep the Monte Carlo simulation and bind the Threshold
-dip_null_naive <- map_dfr(n_sequence, function(n) {
-  res <- simulate_empirical_null_dip(engine, N = n, iterations = 200)
-  res$Threshold <- sorted_scores_naive[n]
+  dip_control_naive <- map_dfr(n_sequence, function(n) {
+  res <- simulate_dip_control(engine, N = n, iterations = 200)
+  res$Threshold <- get_threshold_at_N(engine, n)
   return(res)
 })
 ```
@@ -598,26 +592,32 @@ plot_baseline_profile <- function(results_df, line_color, plot_title, plot_subti
 ```
 
 ```{r}
-#| label: fig-naive-empirical-null-dip
+#| label: fig-naive-control-dip
 #| echo: true
 #| code-summary: "Show Plot Call"
 #| message: false
 #| warning: false
 #| fig-width: 8
 #| fig-height: 5
-#| fig-cap: "Empirical null distribution of Hartigan's Dip Statistic. The observed peak in the stability profile exceeds the 95% chaos threshold, confirming the presence of genuine clustering rather than artefactual signal related to using distances with the test."
+#| fig-cap: "Simulated Control Bounds of Hartigan's Dip Statistic. The observed peak in the actual stacbility profile exceeds the 95% threshold, rejecting the possibility of the observed peak being due to using distances with Hartigan's test. Irregular sampling of the theshold is explained by sampling based on number of anomalies."
 
 # Generate the Naive Dip Plot
 fig_dip_null_naive <- plot_baseline_profile(
-  dip_null_naive,
+  dip_control_naive,
   line_color = "#D55E00", 
-  plot_title = "Empirical Null Baseline: Hartigan's D (Naive Configuration)",
-  plot_subtitle = "Median and [5%, 95%] chaos bounds via independent feature permutation",
+  plot_title = "Control Quantiles for Hartigan's D (Naive Configuration)",
+  plot_subtitle = "Median and [5%, 95%] bounds estimated with Monte Carlo simulations.",
   y_label = "Hartigan's D"
 )
 
 print(fig_dip_null_naive)
 ```
+
+@fig-naive-control-dip displays quantiles of a control distribution for $D$ obtained with the following simulation scheme at each value of $N$: we uniformly sample $N$ observations directly from the entire ingested time course, construct the Isolation Forest distance matrix for that subset, and compute Hartigan's $D$.
+
+Repeated across Monte Carlo iterations, this establishes a baseline of expected distance heterogeneity. By sampling primarily from nominal operations, and not anomalies, the simulation preserves the multivariate dependencies of the dataset. This yields a conservative control to test whether the extracted anomalies exhibit greater distance heterogeneity than typical system variance.
+
+In @fig-naive-evaluate-stability, we observed a maximum $D$ of approximately 0.06 near $T = 0.653$. In the control plot, the 95th percentile of the control distribution remains below 0.02 at this threshold and below 0.035 across the entire sweep. This gap holds at all values of $N$, confirming that the distance heterogeneity observed in the anomaly matrix is not an artifact of utilizing Hartigan's D with a distance matrix.
 
 ```{r}
 #| label: naive-null-lid-profile-preparation
@@ -631,37 +631,44 @@ library(purrr)
 library(dplyr)
 
 # Sweep the Monte Carlo simulation for the Naive Engine
-# Reusing n_sequence and sorted_scores_naive from the previous Dip chunk
+# Reusing the n_sequence defined in the previous Dip chunk
 lid_results_naive <- map_dfr(n_sequence, function(n) {
-  res <- simulate_healthy_lid_baseline(engine, N = n, iterations = 200)
-  res$Threshold <- sorted_scores_naive[n]
+  res <- simulate_lid_control(engine, N = n, iterations = 200)
+  res$Threshold <- get_threshold_at_N(engine, n)
   return(res)
 })
 ```
 
 ```{r}
-#| label: fig-naive-null-lid-profile
+#| label: fig-lid-control
 #| echo: true
 #| code-summary: "Show Plot Call"
 #| message: false
 #| warning: false
 #| fig-width: 8
 #| fig-height: 5
-#| fig-cap: "Null baseline for Local Intrinsic Dimensionality (LID). The observed drop in dimensionality during anomalies falls below the 5% lower bound of normal operating states, confirming a structural break."
+#| fig-cap: "Simulated Control Bounds for Local Intrinsic Dimensionality (LID). The observed drop in dimensionality with anomalies falls below the 5% lower bound, in agreement with the hypothesis of a structural break for detected anomalies. Irregular sampling of the theshold is explained by sampling based on number of anomalies."
 
 message(sprintf("Simulating random healthy LID space across %d steps...", length(n_sequence)))
 
-# Visualize using the universal baseline wrapper defined in the Dip chunk
 fig_lid_naive <- plot_baseline_profile(
   lid_results_naive,
   line_color = "#CC79A7", # Matches the exact purple/pink LID color from the stability panels
-  plot_title = "Healthy Baseline: Intrinsic Dimensionality (Naive Configuration)",
-  plot_subtitle = "Median and [5%, 95%] bounds of normal operating states (non-contiguous sampling)",
+  plot_title = "Control Quantiles for Intrinsic Dimensionality (Naive Configuration)",
+  plot_subtitle = "Median and [5%, 95%] bounds.",
   y_label = "Local Intrinsic Dimensionality (LID)"
 )
 
 print(fig_lid_naive)
 ```
+
+@fig-lid-control shows the results obtained when applying the same control strategy to LID. This provides a baseline of expected local intrinsic dimensionality.
+
+In @fig-naive-evaluate-stability, the last two plateaus ($k=2$ and $k=3$) are characterized by small values of LID: below the 95th percentile of values obtained with the control at same $N$. Therefore, it is likely that anomalies for $k=2$ and $k=3$ represent system breakdowns.
+
+Next, we extract the cluster medoids (the centrally representative points of each cluster) utilizing the `extract_medoids` method. By setting the target k to NULL, the algorithm automatically calibrates and selects the optimal number of clusters by maximizing the global silhouette score.
+
+Note that this method does not return an isolated data point. The engine utilizes the `temporal_window_hours` parameter defined in the YAML configuration. For each identified medoid, it returns the physical window surrounding the anomaly timestamp.
 
 ```{r}
 #| label: naive-medoids-extraction
@@ -674,18 +681,14 @@ library(dplyr)
 library(tidyr)
 library(stringr)
 
-# TARGET THE MAXIMUM HETEROGENEITY (DIP PEAK) FOR THE NAIVE ENGINE
-th_naive_extreme <- stability_curve_naive$Threshold[which.max(stability_curve_naive$Hartigans_D)]
-target_k <- 3
+# Target the threshold where Hartigan's D peaks
+th_maxD_naive <- stability_curve_naive$Threshold[which.max(stability_curve_naive$Hartigans_D)]
 
-message(sprintf("Targeting Naive Peak Threshold (T = %.4f) at k = %d...", th_naive_extreme, target_k))
+# The optimal k will be automatically chosen
+target_k <- NULL
 
-# EXTRACT AND CLUSTER USING S4 API
-# Overwrite the 'engine' object with its fully populated medoid state
-engine <- suppressMessages(extract_anomalies(engine, threshold = th_naive_extreme))
-engine <- suppressMessages(compute_distances(engine))
-engine <- suppressMessages(calibrate(engine, min_k = target_k, max_k = target_k))
-engine <- suppressMessages(extract_medoids(engine, k = target_k))
+# Extract anomalies, compute distances, calibrate the tree, and extract medoids in one step
+engine <- extract_medoids(engine, threshold = th_maxD_naive, k = target_k)
 ```
 
 ```{r}
@@ -693,17 +696,19 @@ engine <- suppressMessages(extract_medoids(engine, k = target_k))
 #| message: false
 #| warning: false
 #| echo: true
-#| code-summary: "Show Medoids Plot Function"
+#| code-summary: "Show Medoid Plot Function"
 
 library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
 
-# 1. DEFINE THE UNIVERSAL MEDOID PLOTTING WRAPPER
+# Define the medoid plotting wrapper
 plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
   
   raw_medoids <- get_medoids(medoid_engine)
   schema <- get_features(medoid_engine)
   
-  # Dynamically pull valid columns from the active schema
   plot_vars <- intersect(
     c(schema$context_variables, schema$target_variables), 
     colnames(raw_medoids)
@@ -713,10 +718,32 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
     str_to_title(str_replace_all(str_replace_all(x, "_15m", ""), "_", " "))
   }
   
+  # Compute robust global bounds to anchor y-axes
+  global_bounds <- medoid_engine@raw_time_course |>
+    select(all_of(plot_vars)) |>
+    pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") |>
+    group_by(Variable) |>
+    summarise(
+      Min = quantile(Value, 0.01, na.rm = TRUE),
+      Max = quantile(Value, 0.99, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(
+      Variable_Clean = factor(Variable, levels = plot_vars, labels = sapply(plot_vars, format_var_name))
+    )
+  
+  blank_data <- bind_rows(
+    global_bounds |> select(Variable_Clean, Value = Min),
+    global_bounds |> select(Variable_Clean, Value = Max)
+  )
+  
+  # Prepare plotting data with a Proximity weight for visual decay
   plot_data <- raw_medoids |>
     mutate(
       Relative_Time = as.numeric(difftime(timestamp, medoid_timestamp, units = "hours")),
-      Archetype = str_replace(cluster, "Cluster", "Archetype")
+      Archetype = str_replace(cluster, "Cluster", "Archetype"),
+      # Calculate distance from t=0 (1 at t=0, approaches 0 at the edges)
+      Proximity = 1 - (abs(Relative_Time) / max(abs(Relative_Time), na.rm = TRUE))
     ) |>
     pivot_longer(
       cols = all_of(plot_vars),
@@ -728,14 +755,28 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
     )
   
   p <- ggplot(plot_data, aes(x = Relative_Time, y = Value, color = Variable_Clean)) +
-    geom_line(linewidth = 1) +
     geom_vline(xintercept = 0, linetype = "dashed", color = "black", alpha = 0.5) +
+    # Map both opacity and line thickness to proximity to t=0
+    geom_line(aes(alpha = Proximity, linewidth = Proximity)) +
+    # NEW: Anchor point at exactly t=0
+    geom_point(
+      data = function(x) filter(x, Relative_Time == 0), 
+      shape = 21, 
+      color = "black",          # Crisp border
+      size = 3.5,               # Large anchor size
+      stroke = 0.8,             # Border thickness
+      aes(fill = Variable_Clean)
+    ) +
+    geom_blank(data = blank_data, aes(x = 0, y = Value), inherit.aes = FALSE) + 
     facet_grid(Variable_Clean ~ Archetype, scales = "free_y") +
     scale_color_viridis_d(option = "turbo") + 
+    scale_fill_viridis_d(option = "turbo") + # Ensure the point fill matches the line color
+    scale_alpha_continuous(range = c(0.2, 1), guide = "none") +
+    scale_linewidth_continuous(range = c(0.4, 2), guide = "none") +
     labs(
       title = plot_title,
       subtitle = plot_subtitle,
-      x = "Relative Time from Structural Break (Hours)",
+      x = "Relative Time from Anomaly (Hours)",
       y = "Telemetry Value"
     ) +
     theme_bw(base_size = 12) +
@@ -746,12 +787,13 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
       strip.background = element_rect(fill = "#f0f0f0", color = "grey80", linewidth = 0.5),
       panel.grid.minor = element_blank(),
       panel.spacing = unit(0, "pt"),
-      panel.border = element_rect(color = "grey80", fill = NA, linewidth = 0.5)
+      panel.border = element_rect(color = "grey80", fill = NA, linewidth = 1.0)
     )
   
   return(p)
 }
 ```
+
 
 ```{r}
 #| label: fig-naive-medoids
@@ -761,25 +803,104 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
 #| warning: false
 #| fig-width: 10
 #| fig-height: 10
-#| fig-cap: "Multivariate trajectories of extracted medoids at k=3. Archetype 1 and 3 isolate power failures. Archetype 2 is more difficult to interpret."
+#| fig-cap: "Multivariate time-course trajectories for the two extracted HVAC fault archetypes at anomaly threshold $T=0.6534$. The physical window spans from two hours before to two hours after the detected anomaly timestamp (dashed vertical line)." 
 
-# VISUALIZATION
+# Visualization
 fig_medoids_naive <- plot_medoid_trajectories(
   engine,
-  plot_title = sprintf("Multivariate Trajectories of HVAC Faults (Naive Configuration, T=%.4f)", th_naive_extreme),
-  plot_subtitle = sprintf("Exploring structural break signatures across %d extracted archetypes.", target_k)
+  plot_title = sprintf("Multivariate Trajectories of HVAC Faults (Naive Configuration, T=%.4f)", th_maxD_naive),
+  plot_subtitle = "Archetypes extracted at the maximum Hartigan's D threshold."
 )
 
 print(fig_medoids_naive)
 ```
 
+
+@fig-naive-medoids-plot shows that targeting the maximum distance heterogeneity with $D$ isolated two distinct physical faults.
+
+Archetype 1 represents a prolonged inactive state. Both Power and Energy remain at zero across the four-hour window, while the environmental variable T Outdoor steadily rise. This suggests an offline unit failing to respond to changing external conditions. 
+
+In contrast, Archetype 2 captures a sudden operational failure. The HVAC system is actively running and consuming energy prior to the anomaly, but at the anomaly timestamp ($t=0$), Power and Energy abruptly drop to zero. 
+
+Targetting the maximum value of Hartigan's dip $D$ led to the detection of two rather different fault archetypes. We next illustrate the use of LID by extracting medoids at its lowest value.
+
+
 ```{r}
-#| label: naive-medoids-k2
+#| label: lid-medoids-extraction
+#| code-fold: show
+#| code-summary: "Show Medoids Extraction (Min LID)"
+#| message: false
+#| warning: false
+
+# Target the threshold where Local Intrinsic Dimensionality (LID) is minimized
+th_minLID_naive <- stability_curve_naive$Threshold[which.min(stability_curve_naive$Global_LID)]
+
+# The optimal k will be automatically chosen (expected k=3 based on stability profile)
+engine <- extract_medoids(engine, threshold = th_minLID_naive, k = NULL)
+```
+
+```{r}
+#| label: fig-lid-medoids-plot
+#| echo: true
+#| message: false
+#| warning: false
+#| fig-width: 12
+#| fig-height: 12
+#| fig-cap: "Multivariate time-course trajectories for the three extracted HVAC fault archetypes at the minimum LID threshold. The physical window spans from two hours before to two hours after the detected anomaly timestamp (dashed vertical line)."
+
+# Call the plotting wrapper on the extracted medoids
+fig_lid_medoids <- plot_medoid_trajectories(
+  engine, 
+  plot_title = "Multivariate Trajectories of HVAC Faults (Naive Configuration, Minimum LID)",
+  plot_subtitle = "Archetypes extracted at the threshold of maximum variable coupling"
+)
+
+print(fig_lid_medoids)
+```
+
+
+
+```{r}
+#| label: lid-medoids-extraction-k2
+#| code-fold: show
+#| code-summary: "Show Medoids Extraction (Min LID, Forced k=2)"
+#| message: false
+#| warning: false
+
+# Force k=2 at the minimum LID threshold to merge the fragmented clones
+engine <- suppressMessages(extract_medoids(engine, threshold = th_minLID_naive, k = 2))
+```
+
+```{r}
+#| label: fig-lid-medoids-k2-plot
+#| echo: true
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 12
+#| fig-cap: "Multivariate time-course trajectories for the HVAC fault archetypes at the minimum LID threshold, forced to $k=2$."
+
+# Call the plotting wrapper on the extracted medoids
+fig_lid_medoids_k2 <- plot_medoid_trajectories(
+  engine, 
+  plot_title = "Multivariate Trajectories of HVAC Faults (Naive Configuration, Min LID, k=2)",
+  plot_subtitle = "Archetypes extracted at the threshold of maximum variable coupling with k=2 override"
+)
+print(fig_lid_medoids_k2)
+```
+
+```{r}
+knitr::knit_exit()
+```
+
+
+```{r}
+#| label: naive-medoids-k3
 #| message: false
 #| warning: false
 #| echo: true
 #| code-fold: show
-#| code-summary: "Show Medoids Extraction at k = 2"
+#| code-summary: "Show Medoids Extraction at Minimum LID"
 #| fig-cap: "Multivariate trajectories compressed to k=2. Now only the two power-failure archetypes seen at k = 3 are present."
 
 target_k <- 2
@@ -794,17 +915,7 @@ engine_k2 <- suppressMessages(extract_medoids(engine_k2, k = target_k))
 ```
 
 
-In addition to the profile of optimal cluster count $k$, method `evaluate_k_stability` of `isoRouting` also computes two other profiles displayed in @fig-evaluate-stability:
-- The number $N$ of anomalies as a function of the anomaly score threshold. This is helpful to detect clustering over a small $N$.
-- A profile of clustering-independent non-parametric test effect size: Hartigan's Dip Statistic $D$ [@hartigan1985dip]. This test is applied to the elements of the underlying Hamming distance matrix and tests the hypothesis of unimodality. So, a large $D$ rejects the unimodal hypothesis and indicates the presence of at least two groups of distances, thus suggesting the presence of coherent clusters. 
 
-@fig-evaluate-stability reveals a lack of robust archetypes in the naive configuration. 
-
-We conclude here that utilizing the raw features of the Turin dataset with `isoRouting` does not yield stable clustering of anomalies.
-
-```{r}
-knitr::knit_exit()
-```
 
 ## Engineering Features for the Turin HVAC dataset
 

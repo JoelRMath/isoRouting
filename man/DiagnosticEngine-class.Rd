@@ -42,6 +42,8 @@ It applies divisive hierarchical clustering and global silhouette to extract mat
 
 \item{\code{active_k}}{numeric. The mathematically validated number of fault clusters.}
 
+\item{\code{optimal_k}}{numeric. The optimal number k of cluster (global silouhette).}
+
 \item{\code{forensic_ledger}}{data.frame. Ranked historical ledger mapping anomalies to their medoid.}
 }}
 

@@ -109,7 +109,6 @@ check_time_continuity <- function(time_vector, tolerance = 0) {
   )
 }
 
-
 #' Compute Local Intrinsic Dimensionality (LID) Profile
 #'
 #' @param dist_mat An N x N distance matrix (from isotree topology).
@@ -159,44 +158,43 @@ compute_lid_profile <- function(dist_mat, cluster_labels, k = 5, eps = 1e-8) {
   ))
 }
 
-#' @title Simulate Healthy Baseline LID Profile
-#' @description Generates the empirical null distribution for Local Intrinsic Dimensionality 
-#' by randomly sampling normal operating states (inliers).
+#' @title Simulate Control Quantiles for Local Intrinsic Dimensionality (LID)
+#' @description Generates an expected baseline distribution for LID 
+#' by uniformly sampling N observations from the complete time course. 
+#' This preserves natural multivariate dependencies and physical constraints, 
+#' providing a conservative control baseline against which anomaly breakdown 
+#' (variable coupling) can be evaluated.
 #' @param engine A populated `DiagnosticEngine` object.
 #' @param N Integer. The subset size to sample.
 #' @param iterations Integer. Number of Monte Carlo iterations. Default is 200.
 #' @param k Integer. The number of nearest neighbors for LID estimation. Default is 5.
-#' @return A data.frame containing N, Mean, and quantiles (5%, 25%, 50%, 75%, 95%).
+#' @return A data.frame containing N, Median, and quantiles (5%, 25%, 50%, 75%, 95%).
 #' @export
-simulate_healthy_lid_baseline <- function(engine, N, iterations = 200, k = 5) {
+simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
   features <- engine@feature_matrix
+  total_rows <- nrow(features)
+  
+  if (N > total_rows) {
+    stop("N cannot exceed total ingested observations.")
+  }
+  
   hyps <- engine@hyperparameters
   ntrees <- hyps$ntrees
-  
-  # Train fast global model to identify healthy inliers
-  actual_size <- min(hyps$sample_size, nrow(features))
-  global_model <- suppressWarnings(
-    isotree::isolation.forest(features, ntrees = ntrees, sample_size = actual_size, missing_action = "fail")
-  )
-  scores <- stats::predict(global_model, features)
-  healthy_idx <- which(scores <= stats::median(scores))
-  
-  if (length(healthy_idx) < N) {
-    stop("Not enough healthy data to sample N points.")
-  }
   
   lids <- numeric(iterations)
   
   for (i in seq_len(iterations)) {
-    sampled_idx <- sample(healthy_idx, N, replace = FALSE)
-    block_features <- features[sampled_idx, ]
+    # Conservative baseline: sample directly from the entire dataset
+    sampled_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
+    block_features <- features[sampled_idx, , drop = FALSE]
     
+    # Calculate pairwise distances on the sampled block
     iso_model <- suppressWarnings(
       isotree::isolation.forest(block_features, ntrees = ntrees, sample_size = N, missing_action = "fail")
     )
     d_mat <- as.matrix(stats::predict(iso_model, block_features, type = "dist"))
     
-    # Utilizing the existing helper
+    # Compute LID profile using existing helper
     lid_res <- compute_lid_profile(d_mat, cluster_labels = rep(1, N), k = k)
     lids[i] <- lid_res$Global_LID
   }
@@ -214,55 +212,49 @@ simulate_healthy_lid_baseline <- function(engine, N, iterations = 200, k = 5) {
   ))
 }
 
-#' @title Simulate Empirical Null Dip Statistic
-#' @description Generates the empirical null distribution for Hartigan's D by independently 
-#' permuting feature columns to destroy multivariate dependencies.
-#' @param engine A populated `DiagnosticEngine` object.
+#' Simulate Control Quantiles for Hartigan's Dip Statistic
+#'
+#' Estimates the baseline distance heterogeneity (Hartigan's D) by uniformly 
+#' sampling N observations from the complete time course. This preserves natural 
+#' multivariate dependencies and physical constraints, providing a conservative 
+#' control baseline against which anomaly clustering can be evaluated.
+#'
+#' @param object A \code{DiagnosticEngine} object.
 #' @param N Integer. The subset size to sample.
-#' @param iterations Integer. Number of Monte Carlo iterations. Default is 200.
-#' @return A data.frame containing N, Mean, and quantiles (5%, 25%, 50%, 75%, 95%).
+#' @param iterations Integer. Number of Monte Carlo iterations (default is 200).
+#'
+#' @return A \code{data.frame} containing the sample size (\code{N}), 
+#' \code{Median}, \code{Q05}, and \code{Q95} bounds of the simulated Dip statistics.
 #' @export
-simulate_empirical_null_dip <- function(engine, N, iterations = 200) {
-  features <- engine@feature_matrix
-  hyps <- engine@hyperparameters
-  ntrees <- hyps$ntrees
+simulate_dip_control <- function(object, N, iterations = 200) {
+  features <- object@feature_matrix
+  total_rows <- nrow(features)
   
-  n_rows <- nrow(features)
-  dip_stats <- numeric(iterations)
+  if (N > total_rows) stop("N cannot exceed total ingested observations.")
+  
+  dip_results <- numeric(iterations)
   
   for (i in seq_len(iterations)) {
-    # Independent permutation to create the "chaos" space
-    permuted_features <- as.data.frame(lapply(features, function(col) sample(col, n_rows, replace = FALSE)))
+    # Conservative baseline: sample directly from the real, bounded topology
+    sample_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
+    sampled_features <- features[sample_idx, , drop = FALSE]
     
-    sampled_idx <- sample(seq_len(n_rows), N, replace = FALSE)
-    block_features <- permuted_features[sampled_idx, ]
-    
-    iso_model <- suppressWarnings(
-      isotree::isolation.forest(block_features, ntrees = ntrees, sample_size = N, missing_action = "fail")
+    # Calculate pairwise Hamming distances via isotree
+    temp_model <- suppressWarnings(
+      isotree::isolation.forest(sampled_features, ntrees = object@hyperparameters$ntrees)
     )
-    d_obj <- stats::predict(iso_model, block_features, type = "dist")
+    dist_matrix <- stats::predict(temp_model, sampled_features, type = "dist")
     
-    d_mat <- as.matrix(d_obj)
-    d_vec <- d_mat[upper.tri(d_mat)]
-    
-    if (length(d_vec) >= 4) {
-      dip_stats[i] <- diptest::dip(d_vec)
-    } else {
-      dip_stats[i] <- NA_real_
-    }
+    # Compute Hartigan's D (assuming internal helper is available)
+    dip_results[i] <- compute_dip_statistic(dist_matrix)
   }
   
-  quant <- stats::quantile(dip_stats, probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE)
-  
-  return(data.frame(
+  data.frame(
     N = N,
-    Median = median(dip_stats, na.rm = TRUE),
-    Q05 = quant[1],
-    Q25 = quant[2],
-    Q50 = quant[3],
-    Q75 = quant[4],
-    Q95 = quant[5]
-  ))
+    Median = median(dip_results, na.rm = TRUE),
+    Q05 = quantile(dip_results, 0.05, na.rm = TRUE),
+    Q95 = quantile(dip_results, 0.95, na.rm = TRUE)
+  )
 }
 
 #' @title Compute Hartigan's Dip Statistic

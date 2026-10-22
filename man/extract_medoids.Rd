@@ -2,18 +2,30 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{extract_medoids}
 \alias{extract_medoids}
+\alias{extract_medoids,DiagnosticEngine-method}
 \title{Extract Topological Medoids}
 \usage{
-extract_medoids(object, k)
+extract_medoids(object, threshold = NULL, N = NULL, k = NULL)
+
+extract_medoids(object, threshold = NULL, N = NULL, k = NULL)
+
+\S4method{extract_medoids}{DiagnosticEngine}(object, threshold = NULL, N = NULL, k = NULL)
 }
 \arguments{
-\item{object}{A DiagnosticEngine object.}
+\item{object}{A \code{DiagnosticEngine} object.}
 
-\item{k}{Integer. The target number of anomaly clusters.}
+\item{threshold}{Numeric. Optional. The anomaly score threshold used to define the subset of extreme events.}
+
+\item{N}{Integer. Optional. The target number of top anomalies to isolate (mapped to a threshold internally).}
+
+\item{k}{Integer. Optional. Overrides the calibrated optimal $k$ to force a specific number of clusters.}
 }
 \value{
-An updated DiagnosticEngine object with the medoids and baseline_signatures slots populated.
+A \code{DiagnosticEngine} object with populated \code{@medoids} and \code{@baseline_signatures} slots.
 }
 \description{
-Computes the topological center of each cluster and extracts physical time courses.
+Extracts archetypal time-course medoids from the anomaly topology. If a
+\code{threshold} or \code{N} is provided, the method automatically extracts
+the corresponding statistical substrate, computes distance matrices, and
+calibrates the optimal number of clusters.
 }
