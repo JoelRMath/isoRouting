@@ -108,6 +108,7 @@ Based on the heatmap one could be tempted to remove some variables with high cor
 
 ```{r}
 #| label: fig-pairs-plot
+#| eval: false
 #| warning: false
 #| message: false
 #| echo: true
@@ -372,6 +373,7 @@ Method `explore_thresholds()` rapidly scores the feature space without mutating 
 
 ```{r}
 #| label: naive-explore-thresholds
+#| eval: false
 #| echo: true
 #| code-fold: show
 #| code-summary: "Show Threshold Exploration"
@@ -384,6 +386,7 @@ threshold_curve <- explore_thresholds(engine, thresholds = seq(0.50, 0.75, by = 
 
 ```{r}
 #| label: fig-naive-threshold-decay
+#| eval: false
 #| echo: true
 #| code-summary: "Show Visualization Code"
 #| fig-cap: "Anomaly threshold decay curve showing the reduction in isolated extreme events as the Isolation Forest score threshold increases."
@@ -425,6 +428,7 @@ These two basic methods are complemented with a more complex one presented next.
 
 ```{r}
 #| label: naive-evaluate-stability
+#| eval: false
 #| echo: true
 #| code-fold: show
 #| code-summary: "Show evaluate_k_stability Call"
@@ -521,6 +525,7 @@ plot_topological_stability <- function(stability_df, plot_title, plot_subtitle) 
 
 ```{r}
 #| label: fig-naive-evaluate-stability
+#| eval: false
 #| echo: true
 #| code-summary: "Show Plot Call"
 #| fig-cap: "Topological stability across anomaly thresholds using raw telemetry features. The volatility across all metrics indicates a lack of stable anomaly archetypes."
@@ -546,6 +551,7 @@ Comparing values of diagnostic metrics $D$ and LID is in itself useful. One can 
 
 ```{r}
 #| label: naive-anomaly-thresholds
+#| eval: false
 #| code-fold: show
 #| code-summary: "Show Null Dip Computation"
 #| message: false
@@ -554,7 +560,8 @@ Comparing values of diagnostic metrics $D$ and LID is in itself useful. One can 
 library(purrr)
 library(dplyr)
 
-n_sequence <- seq(20, 100, by = 5)
+# TB Modified: by = 5
+n_sequence <- seq(20, 100, by = 20)
 
   dip_control_naive <- map_dfr(n_sequence, function(n) {
   res <- simulate_dip_control(engine, N = n, iterations = 200)
@@ -593,6 +600,7 @@ plot_baseline_profile <- function(results_df, line_color, plot_title, plot_subti
 
 ```{r}
 #| label: fig-naive-control-dip
+#| eval: false
 #| echo: true
 #| code-summary: "Show Plot Call"
 #| message: false
@@ -621,6 +629,7 @@ In @fig-naive-evaluate-stability, we observed a maximum $D$ of approximately 0.0
 
 ```{r}
 #| label: naive-null-lid-profile-preparation
+#| eval: false
 #| echo: true
 #| code-fold: show
 #| code-summary: "Show Data Preparation (call to simulation helper)"
@@ -641,6 +650,7 @@ lid_results_naive <- map_dfr(n_sequence, function(n) {
 
 ```{r}
 #| label: fig-lid-control
+#| eval: false
 #| echo: true
 #| code-summary: "Show Plot Call"
 #| message: false
@@ -668,10 +678,11 @@ In @fig-naive-evaluate-stability, the last two plateaus ($k=2$ and $k=3$) are ch
 
 Next, we extract the cluster medoids (the centrally representative points of each cluster) utilizing the `extract_medoids` method. By setting the target k to NULL, the algorithm automatically calibrates and selects the optimal number of clusters by maximizing the global silhouette score.
 
-Note that this method does not return an isolated data point. The engine utilizes the `temporal_window_hours` parameter defined in the YAML configuration. For each identified medoid, it returns the physical window surrounding the anomaly timestamp.
+Note that this method does not return an isolated data point. The engine utilizes the `temporal_window_hours` parameter defined in the YAML configuration. For each identified medoid, it returns the physical window surrounding the anomaly timestamp. Now, keep in mind that for this naive yaml configuration, features fed to the Isolation Forest are static ones: they have not been engineered to reflect change over time. Therefore, **the presented time windows are not explanatory of the anomalies**, only at best informative in terms of when they occur.
 
 ```{r}
 #| label: naive-medoids-extraction
+#| eval: false
 #| code-fold: show
 #| code-summary: "Show Medoids Extraction"
 #| message: false
@@ -704,7 +715,7 @@ library(tidyr)
 library(stringr)
 
 # Define the medoid plotting wrapper
-plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
+plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, label_style = "numeric") {
   
   raw_medoids <- get_medoids(medoid_engine)
   schema <- get_features(medoid_engine)
@@ -741,7 +752,12 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
   plot_data <- raw_medoids |>
     mutate(
       Relative_Time = as.numeric(difftime(timestamp, medoid_timestamp, units = "hours")),
-      Archetype = str_replace(cluster, "Cluster", "Archetype"),
+      # Dynamically assign Archetype labels based on the selected style
+      Archetype = if (label_style == "alpha") {
+        paste("Archetype", LETTERS[as.numeric(str_extract(cluster, "\\d+"))])
+      } else {
+        str_replace(cluster, "Cluster", "Archetype")
+      },
       # Calculate distance from t=0 (1 at t=0, approaches 0 at the edges)
       Proximity = 1 - (abs(Relative_Time) / max(abs(Relative_Time), na.rm = TRUE))
     ) |>
@@ -758,7 +774,7 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
     geom_vline(xintercept = 0, linetype = "dashed", color = "black", alpha = 0.5) +
     # Map both opacity and line thickness to proximity to t=0
     geom_line(aes(alpha = Proximity, linewidth = Proximity)) +
-    # NEW: Anchor point at exactly t=0
+    # Anchor point at exactly t=0
     geom_point(
       data = function(x) filter(x, Relative_Time == 0), 
       shape = 21, 
@@ -770,7 +786,7 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
     geom_blank(data = blank_data, aes(x = 0, y = Value), inherit.aes = FALSE) + 
     facet_grid(Variable_Clean ~ Archetype, scales = "free_y") +
     scale_color_viridis_d(option = "turbo") + 
-    scale_fill_viridis_d(option = "turbo") + # Ensure the point fill matches the line color
+    scale_fill_viridis_d(option = "turbo") + 
     scale_alpha_continuous(range = c(0.2, 1), guide = "none") +
     scale_linewidth_continuous(range = c(0.4, 2), guide = "none") +
     labs(
@@ -794,9 +810,9 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle) {
 }
 ```
 
-
 ```{r}
 #| label: fig-naive-medoids
+#| eval: false
 #| echo: true
 #| code-summary: "Show Medoids Plot Call"
 #| message: false
@@ -816,17 +832,20 @@ print(fig_medoids_naive)
 ```
 
 
-@fig-naive-medoids-plot shows that targeting the maximum distance heterogeneity with $D$ isolated two distinct physical faults.
+@fig-naive-medoids-plot shows that targeting the maximum distance heterogeneity with $D$ isolated two distinct physical faults. To properly interpret these faults under the naive configuration, we must look only at the anchor points at $t=0$, as these represent the only data the clustering algorithm evaluated.
 
-Archetype 1 represents a prolonged inactive state. Both Power and Energy remain at zero across the four-hour window, while the environmental variable T Outdoor steadily rise. This suggests an offline unit failing to respond to changing external conditions. 
+- **Archetype 1** is characterized at $t=0$ by an actively running system in a warm, humid external environment (high T Outdoor and Rh Outdoor). The system is consuming Power and Energy, and the internal variables reflect an active cooling state with relatively moderate supply and return temperatures. The system might not be able to sufficiently cool the building at this anomaly timestamp.
+- **Archetype 2** represents a different state. At $t=0$, the active Power reading sits exactly at zero in a cool, dry external environment. Despite these cooler ambient conditions, the internal temperatures (T Supply, T Return, T Saturation) are anomalously hot—significantly higher than those in Archetype 1. 
 
-In contrast, Archetype 2 captures a sudden operational failure. The HVAC system is actively running and consuming energy prior to the anomaly, but at the anomaly timestamp ($t=0$), Power and Energy abruptly drop to zero. 
 
-Targetting the maximum value of Hartigan's dip $D$ led to the detection of two rather different fault archetypes. We next illustrate the use of LID by extracting medoids at its lowest value.
+In conclusion, targeting the peak of Hartigan's $D$ maximized the distance between an actively powered, internally cool system operating in a warm environment, and an unpowered, internally hot system sitting in a cool environment.
+
+We next illustrate the use of LID by extracting medoids at its lowest value.
 
 
 ```{r}
 #| label: lid-medoids-extraction
+#| eval: false
 #| code-fold: show
 #| code-summary: "Show Medoids Extraction (Min LID)"
 #| message: false
@@ -841,6 +860,7 @@ engine <- extract_medoids(engine, threshold = th_minLID_naive, k = NULL)
 
 ```{r}
 #| label: fig-lid-medoids-plot
+#| eval: false
 #| echo: true
 #| message: false
 #| warning: false
@@ -852,74 +872,27 @@ engine <- extract_medoids(engine, threshold = th_minLID_naive, k = NULL)
 fig_lid_medoids <- plot_medoid_trajectories(
   engine, 
   plot_title = "Multivariate Trajectories of HVAC Faults (Naive Configuration, Minimum LID)",
-  plot_subtitle = "Archetypes extracted at the threshold of maximum variable coupling"
+  plot_subtitle = "Archetypes extracted at the threshold of maximum variable coupling",
+  label_style = "alpha"
 )
 
 print(fig_lid_medoids)
 ```
 
 
+@fig-lid-medoids-plot illustrates the concept of clustering fragmentation which happens here at the minimum LID. Archetype B mirrors the previous Archetype 1. At $t=0$, the system is actively running at high power (Power $\approx 6$) with moderate internal temperatures.
 
-```{r}
-#| label: lid-medoids-extraction-k2
-#| code-fold: show
-#| code-summary: "Show Medoids Extraction (Min LID, Forced k=2)"
-#| message: false
-#| warning: false
+Archetypes A and C are merely deviants of this same active state. While their instantaneous Power readings fluctuate at $t=0$ (dropping to $\approx 3$ in A, and $\approx 0$ in C), their internal thermodynamic states remain cool.
 
-# Force k=2 at the minimum LID threshold to merge the fragmented clones
-engine <- suppressMessages(extract_medoids(engine, threshold = th_minLID_naive, k = 2))
-```
+Also, the previous Archetype 2, characterized by an unpowered state and a spike in internal temperatures to $>25^\circ C$) is now missing. This shows that the large anomaly threshold required to minimize LID filtered out the fault represented by archetype 2. 
 
-```{r}
-#| label: fig-lid-medoids-k2-plot
-#| echo: true
-#| message: false
-#| warning: false
-#| fig-width: 10
-#| fig-height: 12
-#| fig-cap: "Multivariate time-course trajectories for the HVAC fault archetypes at the minimum LID threshold, forced to $k=2$."
+Now, @fig-naive-medoids-plot shows that, while it is not at its global minimum at T = 0.653 ($k=2$), LID is there at a visible local minimum. This is in agreement with the hypothesis of low LID being a good indicator of a fault.
 
-# Call the plotting wrapper on the extracted medoids
-fig_lid_medoids_k2 <- plot_medoid_trajectories(
-  engine, 
-  plot_title = "Multivariate Trajectories of HVAC Faults (Naive Configuration, Min LID, k=2)",
-  plot_subtitle = "Archetypes extracted at the threshold of maximum variable coupling with k=2 override"
-)
-print(fig_lid_medoids_k2)
-```
-
-```{r}
-knitr::knit_exit()
-```
-
-
-```{r}
-#| label: naive-medoids-k3
-#| message: false
-#| warning: false
-#| echo: true
-#| code-fold: show
-#| code-summary: "Show Medoids Extraction at Minimum LID"
-#| fig-cap: "Multivariate trajectories compressed to k=2. Now only the two power-failure archetypes seen at k = 3 are present."
-
-target_k <- 2
-
-message(sprintf("Targeting Naive Peak Threshold (T = %.4f) at k = %d...", th_naive_extreme, target_k))
-
-# Branch a new S4 state for k=2 to avoid overwriting the k=3 engine
-engine_k2 <- suppressMessages(extract_anomalies(engine, threshold = th_naive_extreme))
-engine_k2 <- suppressMessages(compute_distances(engine_k2))
-engine_k2 <- suppressMessages(calibrate(engine_k2, min_k = target_k, max_k = target_k))
-engine_k2 <- suppressMessages(extract_medoids(engine_k2, k = target_k))
-```
-
-
-
+Lastly, when fragmentation is suspected to be occuring in clustering, optional argument `k` can be utilized in method `extract_medoids` to perform a higher tree cut.
 
 ## Engineering Features for the Turin HVAC dataset
 
-The lack of stable clustering using raw features indicates that absolute sensor values do not adequately capture the distinct operational states of the physical system. To identify features that better represent the underlying mechanics, we examine a multi-day time course of the raw telemetry.
+Utilizing the raw features of the Turin HVAC dataset yielded only two fault archetypes. Raw features are static in the sense that they do not include concept of temporal evolution of variables. To evaluate strategies of feature engineering that would better reflect dynamics of the system, a simple approach is to first look at a short continuous time course of the raw features.
 
 ```{r}
 #| label: fig-data-exploration-all
@@ -940,7 +913,6 @@ library(isoRouting)
 data("hvac_features", package = "isoRouting")
 
 # 2. Instantiate the engine and ingest data strictly through the API
-# (Assumes config_naive is still available in the Quarto environment)
 engine_exploratory <- new("DiagnosticEngine", config_path = config_naive)
 engine_exploratory <- ingest_time_course(engine_exploratory, data = hvac_features)
 
@@ -980,7 +952,142 @@ ggplot(hvac_plot_all, aes(x = timestamp, y = Value, color = Variable)) +
 
 The most prominent characteristics in @fig-data-exploration-all are the step changes across variables like energy, power, and t_supply. These jumps reflect the causal, closed-loop control mechanics of the HVAC system: crossing a programmed threshold triggers a quick mechanical response.
 
-These abrupt changes explain the geometric fragmentation previously observed in @fig-pairs-plot. Because the system rapidly changes between discrete operational states, the pairwise scatterplots manifest as isolated lines and dense clouds devoid of intermediate values. Since these sudden transitions drive the actual physical behavior of the unit, static values of sensor readings are insufficient. To isolate meaningful operational archetypes, we must engineer kinematic features—specifically short time derivatives—that encode these rates of change [@blazquez2021review; @cook2019anomaly].
+These abrupt changes explain the geometric fragmentation previously observed in @fig-pairs-plot. Because the system rapidly changes between discrete operational states, the pairwise scatterplots manifest as isolated lines and dense clouds devoid of intermediate values. Since these sudden transitions drive the actual physical behavior of the unit, static values of sensor readings are insufficient. To isolate meaningful operational archetypes, we must engineer kinematic features—at first short time derivatives—that encode these rates of change [@blazquez2021review; @cook2019anomaly].
+
+```{r}
+#| label: fig-energy-power-histogram
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 9
+#| fig-height: 4
+#| fig-cap: "High-resolution marginal distributions of Energy and Power across the complete telemetry baseline. The pronounced spikes indicate discrete mechanical states rather than continuous variables."
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Plotting high-resolution histograms to evaluate discreteness
+baseline_telemetry |>
+  select(energy, power) |>
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") |>
+  ggplot(aes(x = Value, fill = Variable)) +
+  # Using a high bin count to prevent artificial smoothing of discrete jumps
+  geom_histogram(bins = 150, color = "black", linewidth = 0.1, alpha = 0.75) +
+  facet_wrap(~Variable, scales = "free", ncol = 2) +
+  scale_fill_viridis_d(option = "mako", begin = 0.3, end = 0.7) +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "Marginal Distributions: Energy vs. Power",
+    subtitle = "Evaluating variables for discrete mechanical operational states",
+    x = "Measurement Value",
+    y = "Frequency Count"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+library(dplyr)
+
+# Calculate transition counts across the entire baseline telemetry
+energy_transitions_full <- baseline_telemetry |>
+  select(timestamp, energy) |>
+  mutate(
+    state = case_when(
+      energy >= 0 & energy < 5 ~ "Low",
+      energy >= 5 & energy < 10 ~ "Medium",
+      energy >= 10 & energy <= 15 ~ "High"
+    ),
+    prev_state = lag(state)
+  ) |>
+  filter(!is.na(prev_state) & state != prev_state) |>
+  mutate(
+    transition = paste(prev_state, "->", state)
+  )
+
+transition_counts_full <- energy_transitions_full |>
+  count(transition, sort = TRUE)
+
+print(transition_counts_full)
+```
+
+```{r}
+#| label: eda-power-transitions
+#| message: false
+#| warning: false
+#| echo: true
+
+library(dplyr)
+
+# Calculate transition counts across the baseline telemetry for power
+power_transitions_baseline <- baseline_telemetry |> # Assuming hvac_valid is filtered to baseline_telemetry
+  select(timestamp, power) |>
+  mutate(
+    state = case_when(
+      power >= 0 & power < 2 ~ "Low",
+      power >= 2 & power < 4 ~ "Medium",
+      power >= 4 & power <= 6 ~ "High"
+    ),
+    prev_state = lag(state)
+  ) |>
+  filter(!is.na(prev_state) & state != prev_state) |>
+  mutate(
+    transition = paste(prev_state, "->", state)
+  )
+
+transition_counts_power <- power_transitions_baseline |>
+  count(transition, sort = TRUE)
+
+print(transition_counts_power)
+```
+
+```{r}
+#| label: eda-energy-power-mismatch
+#| message: false
+#| warning: false
+#| echo: true
+
+library(dplyr)
+
+# Verify if energy and power states ever unmatch
+state_mismatches <- hvac_valid |>
+  select(timestamp, energy, power) |>
+  mutate(
+    # Discretize energy
+    energy_state = case_when(
+      energy >= 0 & energy < 5 ~ "Low",
+      energy >= 5 & energy < 10 ~ "Medium",
+      energy >= 10 ~ "High"
+    ),
+    # Discretize power
+    power_state = case_when(
+      power >= 0 & power < 2 ~ "Low",
+      power >= 2 & power < 4 ~ "Medium",
+      power >= 4 ~ "High"
+    )
+  ) |>
+  # Filter for timestamps where the states do not match
+  filter(energy_state != power_state) |>
+  mutate(
+    Mismatch_Type = paste("Energy:", energy_state, "| Power:", power_state)
+  )
+
+# Tally the mismatches
+mismatch_counts <- state_mismatches |>
+  count(Mismatch_Type, name = "Count", sort = TRUE)
+
+print(mismatch_counts)
+```
+
+```{r}
+knitr::knit_exit()
+```
+
 
 
 ```{r}
