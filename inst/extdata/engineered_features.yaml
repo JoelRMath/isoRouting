@@ -1,0 +1,41 @@
+facility_name: Turin R&D Facility
+target_variables:
+  - dw_power
+  - dw_energy
+  - d_rh_outdoor
+  - d_t_outdoor
+  - d_t_return_15m
+  - t_ret_run_length
+  - t_ret_displacement
+  - control_error
+  - supply_delta
+  - d_t_supply_15m
+  - t_sup_run_length
+  - t_sup_displacement
+  - humidity_delta
+  - supply_margin
+  - return_margin
+  - d_humidity_delta_15m
+  - run_length_humidity_delta
+  - displacement_humidity_delta
+  - d_supply_margin_15m
+  - run_length_supply_margin
+  - displacement_supply_margin
+  - d_return_margin_15m
+  - run_length_return_margin
+  - displacement_return_margin
+context_variables:
+  - t_supply
+  - t_return
+  - sp_return
+  - t_saturation
+  - t_outdoor
+  - rh_supply
+  - rh_return
+  - rh_outdoor
+  - energy
+  - power
+anomaly_threshold: 0.68
+temporal_window_hours: 2.0
+sample_size: 256
+ntrees: 500

@@ -952,136 +952,837 @@ ggplot(hvac_plot_all, aes(x = timestamp, y = Value, color = Variable)) +
 
 The most prominent characteristics in @fig-data-exploration-all are the step changes across variables like energy, power, and t_supply. These jumps reflect the causal, closed-loop control mechanics of the HVAC system: crossing a programmed threshold triggers a quick mechanical response.
 
-These abrupt changes explain the geometric fragmentation previously observed in @fig-pairs-plot. Because the system rapidly changes between discrete operational states, the pairwise scatterplots manifest as isolated lines and dense clouds devoid of intermediate values. Since these sudden transitions drive the actual physical behavior of the unit, static values of sensor readings are insufficient. To isolate meaningful operational archetypes, we must engineer kinematic features—at first short time derivatives—that encode these rates of change [@blazquez2021review; @cook2019anomaly].
+These abrupt changes explain the geometric fragmentation previously observed in @fig-pairs-plot. Because the system rapidly changes between discrete operational states, the pairwise scatterplots manifest as isolated lines and dense clouds devoid of intermediate values. Since these sudden transitions drive the actual physical behavior of the unit, static values of sensor readings are insufficient. To isolate meaningful operational archetypes, we must engineer kinematic features—for instance short time derivatives—that encode these rates of change [@blazquez2021review; @cook2019anomaly].
+
+We next present feature data analyses that justify the way we engineer them.
+
+### Power and Energy
 
 ```{r}
-#| label: fig-energy-power-histogram
+#| label: fig-energy-power-mechanics
 #| warning: false
 #| message: false
-#| echo: true
-#| fig-width: 9
-#| fig-height: 4
-#| fig-cap: "High-resolution marginal distributions of Energy and Power across the complete telemetry baseline. The pronounced spikes indicate discrete mechanical states rather than continuous variables."
+#| echo: false
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Top: High-resolution marginal distributions of Energy and Power. Bottom: Transition matrices detailing the frequency of mechanical state changes (static continuous states are filtered out to highlight active transitions)."
 
 library(ggplot2)
 library(dplyr)
 library(tidyr)
+library(patchwork)
 
-# Plotting high-resolution histograms to evaluate discreteness
-baseline_telemetry |>
-  select(energy, power) |>
-  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") |>
-  ggplot(aes(x = Value, fill = Variable)) +
-  # Using a high bin count to prevent artificial smoothing of discrete jumps
-  geom_histogram(bins = 150, color = "black", linewidth = 0.1, alpha = 0.75) +
-  facet_wrap(~Variable, scales = "free", ncol = 2) +
-  scale_fill_viridis_d(option = "mako", begin = 0.3, end = 0.7) +
+# Define uniform factor levels to ensure heatmaps align correctly
+state_levels <- c("Low", "Medium", "High")
+
+# --- 1. Top Row: Histograms ---
+p_hist_energy <- hvac_valid |>
+  ggplot(aes(x = energy)) +
+  geom_histogram(bins = 150, fill = "#3b528b", color = "black", linewidth = 0.1) +
   theme_bw(base_size = 12) +
-  labs(
-    title = "Marginal Distributions: Energy vs. Power",
-    subtitle = "Evaluating variables for discrete mechanical operational states",
-    x = "Measurement Value",
-    y = "Frequency Count"
-  ) +
-  theme(
-    legend.position = "none",
-    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
-    strip.text = element_text(face = "bold", size = 12),
-    panel.grid.minor = element_blank()
-  )
-```
+  labs(title = "Energy Distribution", x = "Energy", y = "Count") +
+  theme(panel.grid.minor = element_blank())
 
-```{r}
-library(dplyr)
+p_hist_power <- hvac_valid |>
+  ggplot(aes(x = power)) +
+  geom_histogram(bins = 150, fill = "#21918c", color = "black", linewidth = 0.1) +
+  theme_bw(base_size = 12) +
+  labs(title = "Power Distribution", x = "Power", y = "Count") +
+  theme(panel.grid.minor = element_blank())
 
-# Calculate transition counts across the entire baseline telemetry
-energy_transitions_full <- baseline_telemetry |>
+# --- 2. Data Prep: Transition Matrices ---
+# Energy transitions
+trans_energy <- hvac_valid |>
   select(timestamp, energy) |>
   mutate(
     state = case_when(
       energy >= 0 & energy < 5 ~ "Low",
       energy >= 5 & energy < 10 ~ "Medium",
-      energy >= 10 & energy <= 15 ~ "High"
+      energy >= 10 ~ "High"
     ),
+    state = factor(state, levels = state_levels),
     prev_state = lag(state)
   ) |>
   filter(!is.na(prev_state) & state != prev_state) |>
-  mutate(
-    transition = paste(prev_state, "->", state)
-  )
+  count(prev_state, state, name = "Count")
 
-transition_counts_full <- energy_transitions_full |>
-  count(transition, sort = TRUE)
-
-print(transition_counts_full)
-```
-
-```{r}
-#| label: eda-power-transitions
-#| message: false
-#| warning: false
-#| echo: true
-
-library(dplyr)
-
-# Calculate transition counts across the baseline telemetry for power
-power_transitions_baseline <- baseline_telemetry |> # Assuming hvac_valid is filtered to baseline_telemetry
+# Power transitions
+trans_power <- hvac_valid |>
   select(timestamp, power) |>
   mutate(
     state = case_when(
       power >= 0 & power < 2 ~ "Low",
       power >= 2 & power < 4 ~ "Medium",
-      power >= 4 & power <= 6 ~ "High"
+      power >= 4 ~ "High"
     ),
+    state = factor(state, levels = state_levels),
     prev_state = lag(state)
   ) |>
   filter(!is.na(prev_state) & state != prev_state) |>
-  mutate(
-    transition = paste(prev_state, "->", state)
-  )
+  count(prev_state, state, name = "Count")
 
-transition_counts_power <- power_transitions_baseline |>
-  count(transition, sort = TRUE)
+# --- 3. Bottom Row: Heatmaps ---
+plot_heatmap <- function(data, title, fill_color) {
+  ggplot(data, aes(x = prev_state, y = state, fill = Count)) +
+    geom_tile(color = "white", linewidth = 0.5) +
+    geom_text(aes(label = Count), color = "white", fontface = "bold", size = 5) +
+    scale_fill_gradient(low = "grey80", high = fill_color) +
+    scale_x_discrete(drop = FALSE) +
+    scale_y_discrete(drop = FALSE) +
+    theme_minimal(base_size = 12) +
+    labs(title = title, x = "Previous State", y = "New State") +
+    theme(
+      legend.position = "none",
+      panel.grid = element_blank(),
+      axis.text = element_text(face = "bold")
+    )
+}
 
-print(transition_counts_power)
+p_heat_energy <- plot_heatmap(trans_energy, "Energy Transitions", "#3b528b")
+p_heat_power <- plot_heatmap(trans_power, "Power Transitions", "#21918c")
+
+# --- 4. Combine with Patchwork ---
+layout <- (p_hist_energy | p_hist_power) / (p_heat_energy | p_heat_power)
+layout + plot_annotation(
+  title = "Mechanical Dynamics: Distributions and Transitions",
+  theme = theme(plot.title = element_text(size = 16, face = "bold"))
+)
 ```
 
-```{r}
-#| label: eda-energy-power-mismatch
-#| message: false
-#| warning: false
-#| echo: true
 
+@fig-energy-power-mechanics displays the distributions and state transitions for both variables. The top histograms show they operate in three discrete bands: Low, Medium, and High. The transition heatmaps reveal control loops that frequently bypass the intermediate state; for instance, power relies heavily on direct Low-to-High and High-to-Low jumps. A simple first derivative ($\Delta_{15m}$) would create numerical ambiguity—a Low-to-Medium jump and a Medium-to-High jump would yield similar gradients. To avoid this, severity of these jumps is encoded by using magnitude-weighted derivatives:
+$$Value_t \times (Value_t - Value_{t-1})$$.
+
+```{r}
+#| label: fig-energy-power-mismatch
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 6
+#| fig-height: 5
+#| fig-cap: "Co-occurrence matrix of Energy and Power states. Off-diagonal tiles represent temporal desynchronization where instantaneous power and accumulated energy do not perfectly align."
+
+library(ggplot2)
 library(dplyr)
 
-# Verify if energy and power states ever unmatch
-state_mismatches <- hvac_valid |>
+state_levels <- c("Low", "Medium", "High")
+
+# Prepare co-occurrence data
+mismatch_data <- hvac_valid |>
   select(timestamp, energy, power) |>
   mutate(
-    # Discretize energy
-    energy_state = case_when(
+    energy_state = factor(case_when(
       energy >= 0 & energy < 5 ~ "Low",
       energy >= 5 & energy < 10 ~ "Medium",
       energy >= 10 ~ "High"
-    ),
-    # Discretize power
-    power_state = case_when(
+    ), levels = state_levels),
+    power_state = factor(case_when(
       power >= 0 & power < 2 ~ "Low",
       power >= 2 & power < 4 ~ "Medium",
       power >= 4 ~ "High"
-    )
+    ), levels = state_levels)
   ) |>
-  # Filter for timestamps where the states do not match
-  filter(energy_state != power_state) |>
+  count(energy_state, power_state, name = "Count")
+
+# Plot heatmap
+ggplot(mismatch_data, aes(x = energy_state, y = power_state, fill = Count)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  # Dynamically change text color based on background darkness
+  geom_text(aes(label = Count, color = Count > 1000), fontface = "bold", size = 5) +
+  scale_color_manual(values = c("black", "white")) +
+  scale_fill_gradient(low = "grey95", high = "#e34a33", trans = "log10") + 
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Energy vs. Power: State Co-occurrence",
+    x = "Energy State (15-min Accumulated)",
+    y = "Power State (Instantaneous)"
+  ) +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank(),
+    axis.text = element_text(face = "bold")
+  )
+```
+
+@fig-energy-power-mismatch evaluates the assumption of colinearity between `energy` and `power` and shows hundreds of off-diagonal state mismatches. 
+
+Therefore, in order to preserve mismatches as potential signs of an anomaly, we include both weighted derivatives of `energy` and `power` in our feature set:
+
+`dw_power(t) = power(t)(power(t)-power(t-1))`<br>
+`dw_energy(t) = energy(t)(energy(t)-energy(t-1))`
+
+### Outdoor Environmental Variables
+
+Unlike the abrupt mechanical step-changes of the HVAC equipment, environmental variables (`rh_outdoor` and `t_outdoor`) are expected to have slow, continuous variations over time. This is first quantified over the entire dataset by calculating the lag-1 autocorrelation coefficient (expected to be close to 1) and the standard deviation ratio, $\sigma_{\Delta} / \sigma_{\text{raw}}$, which compares the standard deviation of the 15-minute step changes to that of the raw variable (expected to be small compared to 1).
+
+```{r}
+#| label: smoothness-quantification
+#| warning: false
+#| message: false
+#| echo: true
+
+library(dplyr)
+library(stats)
+
+hvac_valid |>
+  arrange(timestamp) |>
+  summarise(
+    rh_autocorrelation = acf(rh_outdoor, lag.max = 1, plot = FALSE, na.action = na.pass)$acf[2],
+    rh_sd_ratio = sd(rh_outdoor - lag(rh_outdoor), na.rm = TRUE) / sd(rh_outdoor, na.rm = TRUE),
+    t_autocorrelation = acf(t_outdoor, lag.max = 1, plot = FALSE, na.action = na.pass)$acf[2],
+    t_sd_ratio = sd(t_outdoor - lag(t_outdoor), na.rm = TRUE) / sd(t_outdoor, na.rm = TRUE)
+  ) |>
+  print()
+```
+
+The results confirm the continuous nature of these environmental features: both variables yield large autocorrelations (>0.99) and small standard deviation ratios (<0.14). 
+
+```{r}
+#| label: fig-outdoor-environment
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Distributions of raw values and 15-minute derivatives for outdoor relative humidity (left) and temperature (right). The narrow distributions of the derivatives highlight the slow, continuous nature of environmental shifts."
+
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+# Calculate derivatives
+outdoor_features <- hvac_valid |>
+  arrange(timestamp) |>
+  select(timestamp, rh_outdoor, t_outdoor) |>
   mutate(
-    Mismatch_Type = paste("Energy:", energy_state, "| Power:", power_state)
+    rh_15m_diff = rh_outdoor - lag(rh_outdoor, n = 1),
+    t_15m_diff = t_outdoor - lag(t_outdoor, n = 1)
   )
 
-# Tally the mismatches
-mismatch_counts <- state_mismatches |>
-  count(Mismatch_Type, name = "Count", sort = TRUE)
+# --- 1. RH Plots (Left Column) ---
+p_rh_raw <- ggplot(outdoor_features, aes(x = rh_outdoor)) +
+  geom_histogram(bins = 100, fill = "#440154", color = "black", linewidth = 0.1) +
+  theme_bw(base_size = 12) +
+  labs(title = "Outdoor Humidity (Raw)", x = "Relative Humidity (%)", y = "Count")
 
-print(mismatch_counts)
+p_rh_diff <- ggplot(outdoor_features, aes(x = rh_15m_diff)) +
+  geom_histogram(bins = 100, fill = "#440154", color = "black", linewidth = 0.1) +
+  theme_bw(base_size = 12) +
+  labs(title = "15-Min Derivative (\u0394 15m)", x = "\u0394 RH (%)", y = "Count")
+
+# --- 2. Temp Plots (Right Column) ---
+p_t_raw <- ggplot(outdoor_features, aes(x = t_outdoor)) +
+  geom_histogram(bins = 100, fill = "#c22b38", color = "black", linewidth = 0.1) +
+  theme_bw(base_size = 12) +
+  labs(title = "Outdoor Temperature (Raw)", x = "Temperature (\u00B0C)", y = "Count")
+
+p_t_diff <- ggplot(outdoor_features, aes(x = t_15m_diff)) +
+  geom_histogram(bins = 100, fill = "#c22b38", color = "black", linewidth = 0.1) +
+  theme_bw(base_size = 12) +
+  labs(title = "15-Min Derivative (\u0394 15m)", x = "\u0394 Temperature (\u00B0C)", y = "Count")
+
+# --- 3. Combine with Patchwork ---
+(p_rh_raw | p_t_raw) / (p_rh_diff | p_t_diff) +
+  plot_annotation(
+    title = "Environmental Dynamics: Outdoor Weather Sensors",
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+```
+
+In agreement with the above results, the bottom panels of @fig-outdoor-environment show that the 15-minute first derivatives ($\Delta_{15m}$) for both temperature and humidity are tightly clustered around zero. This suggests that 15-minutes derivative might serve as a good feature for anomaly isolation: they allow the Isolation Forest to easily separate routine weather fluctuations from both sensor malfunctions (e.g., instantaneous $\pm50\%$ humidity dropouts) and severe meteorological events (e.g., sudden temperature plunges during storms).
+
+`d_rh_outdoor(t) = rh_outdoor(t) - rh_outdoor(t-1)`<br>
+`d_t_outdoor(t) = t_outdoor(t) - t_outdoor(t-1)`
+
+### Indoor Return Temperature (t_return)
+
+To explore the behavior of `t_return`, we first examine its raw distribution alongside its 15-minute and 1-hour temporal derivatives.
+
+```{r}
+#| label: fig-t-return-histograms
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Distributions of raw values and temporal derivatives for return temperature across the full dataset."
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+t_return_eda <- hvac_valid |>
+  arrange(timestamp) |>
+  select(timestamp, t_return) |>
+  mutate(
+    t_ret_15m_diff = t_return - lag(t_return, n = 1),
+    t_ret_1h_diff = t_return - lag(t_return, n = 4)
+  )
+
+t_ret_long <- t_return_eda |>
+  pivot_longer(
+    cols = c(t_return, t_ret_15m_diff, t_ret_1h_diff), 
+    names_to = "metric", 
+    values_to = "value"
+  ) |>
+  mutate(
+    metric = factor(metric, 
+                    levels = c("t_return", "t_ret_15m_diff", "t_ret_1h_diff"),
+                    labels = c("Raw t_return (\u00B0C)", "15-Minute Derivative (\u0394 15m)", "1-Hour Derivative (\u0394 1h)"))
+  )
+
+ggplot(t_ret_long, aes(x = value)) +
+  geom_histogram(bins = 100, fill = "#c22b38", color = "black", linewidth = 0.1, alpha = 0.8) +
+  facet_wrap(~metric, scales = "free", ncol = 1) +
+  theme_bw(base_size = 12) +
+  labs(x = "Value", y = "Frequency") +
+  theme(
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+Unlike for outdoor environmental variables [@fig-outdoor-environment], the distribution of `t_return` is smooth and continuous, lacking coarse sensor discretization. In addition, the extended tails of the 1-hour derivative compared to the tight 15-minute derivative suggest that temperature changes compound over time. This hints at the presence of prolonged, continuous periods of active heating or cooling. To quantify the durations of these continuous phases, we apply Run Length Encoding (RLE). We classify 15-minute intervals with a derivative $> 0.05^\circ\text{C}$ as heating and $< -0.05^\circ\text{C}$ as cooling, calculating the total consecutive time spent in each state.
+
+```{r}
+#| label: fig-t-return-run-histograms
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Histogram of continuous heating and cooling durations, calculated using Run Length Encoding on the sign of the 15-minute derivative."
+
+library(dplyr)
+library(ggplot2)
+
+t_return_runs <- hvac_valid |>
+  arrange(timestamp) |>
+  mutate(
+    t_ret_15m_diff = t_return - lag(t_return),
+    diff_sign = case_when(
+      t_ret_15m_diff > 0.05 ~ "Heating (Increasing)",
+      t_ret_15m_diff < -0.05 ~ "Cooling (Decreasing)",
+      TRUE ~ "Stable"
+    )
+  ) |>
+  filter(!is.na(diff_sign))
+
+runs <- rle(t_return_runs$diff_sign)
+
+run_df <- data.frame(
+  state = runs$values,
+  length_15m_intervals = runs$lengths
+) |>
+  filter(state != "Stable") |>
+  mutate(duration_hours = length_15m_intervals * 0.25)
+
+anno_df <- run_df |>
+  group_by(state) |>
+  summarise(
+    max_hrs = max(duration_hours),
+    .groups = "drop"
+  ) |>
+  mutate(label = paste0("Max Duration:\n", max_hrs, " hours"))
+
+ggplot(run_df, aes(x = duration_hours, fill = state)) +
+  geom_histogram(binwidth = 0.25, boundary = 0, color = "black", alpha = 0.8) +
+  facet_wrap(~state, ncol = 1, scales = "free_y") +
+  geom_text(
+    data = anno_df,
+    aes(x = 4.8, y = c(1000, 1000), label = label),
+    inherit.aes = FALSE,
+    hjust = 1, vjust = 1, fontface = "bold", size = 4, color = "grey30"
+  ) +
+  scale_fill_manual(values = c("Cooling (Decreasing)" = "#3b528b", "Heating (Increasing)" = "#c22b38")) +
+  scale_x_continuous(breaks = seq(0, 5, by = 0.5)) +
+  coord_cartesian(xlim = c(0, 5)) +
+  theme_bw(base_size = 12) +
+  labs(x = "Continuous Duration (Hours)", y = "Count of Occurrences") +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+@fig-t-return-run-histograms shows that continuous operational states can persist for nearly 6 hours.
+
+In order for the Isolation Forests to recognize anomalous cooling and heating prolonged events, we explicitly incorporate them with the following tow engineered features.
+
+- **Signed Duration (`t_ret_run_length`)**: An integer counter of how many consecutive intervals the system has been moving in the current direction (positive for heating, negative for cooling). This represents time spent in a continuous state.
+- **Cumulative Displacement (t_ret_displacement)**: The total temperature change since the current continuous run began. This captures the intensity of the state, separating passive environmental drift (long duration, low displacement) from active mechanical forcing (long duration, high displacement).
+
+These features are explicitly defined as
+
+$$
+\begin{aligned}
+\Delta \text{t\_return}_{15m}(t) &= \text{t\_return}(t) - \text{t\_return}(t-1) \\
+\text{t\_ret\_run\_length}(t) &= k \times \text{direction} \\
+\text{t\_ret\_displacement}(t) &= \sum_{i=0}^{k-1} \Delta \text{t\_return}_{15m}(t-i)
+\end{aligned}
+$$
+Where $k$ represents the number of consecutive 15-minute intervals in the current thermodynamic `direction` (-1 for cooling and +1 for heating).
+
+
+### System Error, Thermal Effort, and Thermal Kinematics (`sp_return` & `t_supply`)
+
+The variables `sp_return` (programmed setpoint) and `t_supply` (air exiting the mechanical unit) are final key controls of the HVAC loop. Their independent values do not directly convey the system's performance. For instance, a raw `t_supply` of $22^\circ\text{C}$ represents active heating if the room is $18^\circ\text{C}$, but represents active cooling if the room is $26^\circ\text{C}$.
+
+To provide the Isolation Forest with a better geometric manifold of the system's physical state, we engineer these relationships into two gaps:
+
+```{r}
+#| label: fig-system-gaps
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-cap: "Distributions of the Control Error (top) and Supply Delta (bottom). The Supply Delta captures the operational states: idling (the central spike at zero), active cooling (the left tail), active heating (the right mound), and extreme mechanical anomalies (the distant outliers)."
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+gaps_eda <- hvac_valid |>
+  arrange(timestamp) |>
+  select(timestamp, t_return, sp_return, t_supply) |>
+  mutate(
+    control_error = t_return - sp_return,
+    supply_delta = t_supply - t_return
+  ) |>
+  filter(!is.na(control_error) & !is.na(supply_delta))
+
+gaps_long <- gaps_eda |>
+  pivot_longer(
+    cols = c(control_error, supply_delta), 
+    names_to = "metric", 
+    values_to = "value"
+  ) |>
+  mutate(
+    metric = factor(metric, 
+                    levels = c("control_error", "supply_delta"),
+                    labels = c("Control Error (t_return - sp_return)", 
+                               "Supply Delta (t_supply - t_return)"))
+  )
+
+ggplot(gaps_long, aes(x = value, fill = metric)) +
+  geom_histogram(bins = 150, color = "black", alpha = 0.8, linewidth = 0.1) +
+  facet_wrap(~metric, scales = "free", ncol = 1) +
+  scale_fill_manual(values = c("#3b528b", "#e35932")) +
+  theme_bw(base_size = 12) +
+  labs(x = "Temperature Difference (\u00B0C)", y = "Frequency") +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+- **Control Error (`control_error`)**: The difference between the actual room state and the programmed target. @fig-system-gaps (top) shows a broad, negatively skewed distribution. Large deviations in this feature allow the algorithm to isolate moments where the system is failing to keep up with the environmental load.
+- **Thermal Effort (`supply_delta`)**: The $\Delta T$ across the room. @fig-system-gaps (bottom) cleanly separates the system's operational phases, isolating extreme mechanical effort (the distant outliers) from standard idling or active cycles.
+
+Next, as we did with `t_return`, we explore the duration of active and cooling periods as now defined with `t_supply`.
+
+```{r}
+#| label: fig-t-supply-run-histograms
+#| warning: false
+#| message: false
+#| echo: false
+#| fig-cap: "Histogram of continuous heating and cooling durations for supply air."
+
+library(dplyr)
+library(ggplot2)
+
+supply_runs <- hvac_valid |>
+  arrange(timestamp) |>
+  mutate(
+    t_sup_15m_diff = t_supply - lag(t_supply),
+    diff_sign = case_when(
+      t_sup_15m_diff > 0.05 ~ "Heating (Increasing)",
+      t_sup_15m_diff < -0.05 ~ "Cooling (Decreasing)",
+      TRUE ~ "Stable"
+    )
+  ) |>
+  filter(!is.na(diff_sign))
+
+runs <- rle(supply_runs$diff_sign)
+
+run_df <- data.frame(
+  state = runs$values,
+  length_15m_intervals = runs$lengths
+) |>
+  filter(state != "Stable") |>
+  mutate(duration_hours = length_15m_intervals * 0.25)
+
+anno_df <- run_df |>
+  group_by(state) |>
+  summarise(
+    max_hrs = max(duration_hours),
+    .groups = "drop"
+  ) |>
+  mutate(label = paste0("Max Duration:\n", max_hrs, " hours"))
+
+ggplot(run_df, aes(x = duration_hours, fill = state)) +
+  geom_histogram(binwidth = 0.25, boundary = 0, color = "black", alpha = 0.8) +
+  facet_wrap(~state, ncol = 1, scales = "free_y") +
+  geom_text(
+    data = anno_df,
+    aes(x = Inf, y = Inf, label = label), 
+    inherit.aes = FALSE,
+    hjust = 1.2, vjust = 1.5, fontface = "bold", size = 4, color = "grey30"
+  ) +
+  scale_fill_manual(values = c("Cooling (Decreasing)" = "#3b528b", "Heating (Increasing)" = "#e35932")) +
+  scale_x_continuous(breaks = seq(0, 10, by = 0.5)) +
+  theme_bw(base_size = 12) +
+  labs(x = "Continuous Duration (Hours)", y = "Count of Occurrences") +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+(@fig-t-supply-run-histograms) shows that mechanical modulation phases can persist for up to 6 hours. To equip the Isolation Forest to detect these periods we perform a similar encoding to the one for `t_return`:
+
+$$
+\begin{aligned}
+\text{control\_error}(t) &= \text{t\_return}(t) - \text{sp\_return}(t) \\
+\text{supply\_delta}(t) &= \text{t\_supply}(t) - \text{t\_return}(t) \\
+\Delta \text{t\_supply}_{15m}(t) &= \text{t\_supply}(t) - \text{t\_supply}(t-1) \\
+\text{t\_sup\_run\_length}(t) &= j \times \text{direction} \\
+\text{t\_sup\_displacement}(t) &= \sum_{i=0}^{j-1} \Delta \text{t\_supply}_{15m}(t-i)
+\end{aligned}
+$$
+Where $j$ represents the number of consecutive 15-minute intervals moving in the same thermodynamic direction.
+
+### Humidity and Condensation (`rh_return`, `rh_supply` & `t_saturation`)
+
+Variables `rh_return`, `rh_supply`, and `t_saturation` monitor and control the moisture state of the HVAC system. Relative humidity and saturation temperature are inherently coupled to air temperature. 
+
+To map these relationships, we engineer three differences:
+
+$$\begin{aligned} \text{humidity\_delta}(t) &= \text{rh\_supply}(t) - \text{rh\_return}(t) \\ \text{supply\_margin}(t) &= \text{t\_supply}(t) - \text{t\_saturation}(t) \\ \text{return\_margin}(t) &= \text{t\_return}(t) - \text{t\_saturation}(t) \end{aligned}$$
+
+```{r}
+#| label: fig-moisture-gaps
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 8
+#| fig-height: 10
+#| fig-cap: "Distributions of the engineered moisture gaps: Humidity Delta, Supply Margin, and Return Margin."
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+moisture_gaps_eda <- hvac_valid |>
+  arrange(timestamp) |>
+  select(timestamp, rh_return, rh_supply, t_supply, t_return, t_saturation) |>
+  mutate(
+    humidity_delta = rh_supply - rh_return,
+    supply_margin = t_supply - t_saturation,
+    return_margin = t_return - t_saturation
+  ) |>
+  filter(!is.na(humidity_delta) & !is.na(supply_margin) & !is.na(return_margin))
+
+moisture_long <- moisture_gaps_eda |>
+  pivot_longer(
+    cols = c(humidity_delta, supply_margin, return_margin), 
+    names_to = "metric", 
+    values_to = "value"
+  ) |>
+  mutate(
+    metric = factor(metric, 
+                    levels = c("humidity_delta", "supply_margin", "return_margin"),
+                    labels = c("Humidity Delta (rh_supply - rh_return) [%]", 
+                               "Supply Margin (t_supply - t_saturation) [\u00B0C]",
+                               "Return Margin (t_return - t_saturation) [\u00B0C]"))
+  )
+
+ggplot(moisture_long, aes(x = value, fill = metric)) +
+  geom_histogram(bins = 150, color = "black", alpha = 0.8, linewidth = 0.1) +
+  facet_wrap(~metric, scales = "free", ncol = 1) +
+  scale_fill_manual(values = c("#0868ac", "#7bccc4", "#43a2ca")) +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "EDA: Moisture Gaps and Saturation Margins",
+    subtitle = "Distributions of engineered humidity and saturation relationships",
+    x = "Difference",
+    y = "Frequency"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+As shown in @fig-moisture-gaps, the Humidity Delta maintains a broadly positive distribution, potentially reflecting an average trend towards active humidification.
+
+The Supply Margin reveals multiple distinct operational clusters and notably includes a probability mass that drops into negative territory. 
+
+The Return Margin also has both negative and positive components, but the distribution is less complex than that of the Supply Margin.
+
+Providing the Isolation Forest with the above engineered features should allow it to map different moisture regimes to geometric manifolds then used for anomaly detection.
+
+To determine if these moisture boundaries shift instantaneously or drift over time, we apply the same Run Length Encoding (RLE) methodology previously established for the temperature variables. 
+
+```{r}
+#| label: fig-moisture-gaps-rle
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Histograms of consecutive continuous ramping durations for the engineered moisture gaps."
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# 1. Calculate the gaps and their 15m differences
+moisture_rle_data <- hvac_valid |>
+  arrange(timestamp) |>
+  mutate(
+    humidity_delta = rh_supply - rh_return,
+    supply_margin = t_supply - t_saturation,
+    return_margin = t_return - t_saturation
+  ) |>
+  mutate(
+    hum_delta_diff = humidity_delta - lag(humidity_delta),
+    sup_margin_diff = supply_margin - lag(supply_margin),
+    ret_margin_diff = return_margin - lag(return_margin)
+  ) |>
+  filter(!is.na(hum_delta_diff) & !is.na(sup_margin_diff) & !is.na(ret_margin_diff))
+
+# 2. Helper function to compute RLE for a given vector
+compute_rle <- function(diff_vec, threshold, var_name) {
+  directions <- case_when(
+    diff_vec > threshold ~ "Increasing",
+    diff_vec < -threshold ~ "Decreasing",
+    TRUE ~ "Stable"
+  )
+  
+  runs <- rle(directions)
+  
+  data.frame(
+    variable = var_name,
+    state = runs$values, length_15m = runs$lengths
+  ) |>
+    filter(state != "Stable") |>
+    mutate(duration_hours = length_15m * 0.25)
+}
+
+# 3. Apply RLE to each gap
+rle_hum <- compute_rle(moisture_rle_data$hum_delta_diff, threshold = 0.1, "Humidity Delta (%)")
+rle_sup <- compute_rle(moisture_rle_data$sup_margin_diff, threshold = 0.05, "Supply Margin (\u00B0C)")
+rle_ret <- compute_rle(moisture_rle_data$ret_margin_diff, threshold = 0.05, "Return Margin (\u00B0C)")
+
+# Combine into one dataframe
+all_runs <- bind_rows(rle_hum, rle_sup, rle_ret) |>
+  mutate(variable = factor(variable, levels = c("Humidity Delta (%)", "Supply Margin (\u00B0C)", "Return Margin (\u00B0C)")))
+
+# 4. Compute maximum durations for text annotations
+anno_df <- all_runs |>
+  group_by(variable, state) |>
+  summarise(
+    max_hrs = max(duration_hours),
+    .groups = "drop"
+  ) |>
+  mutate(label = paste0("Max:\n", max_hrs, " h"))
+
+# 5. Plot the histograms on a grid
+ggplot(all_runs, aes(x = duration_hours, fill = state)) +
+  geom_histogram(binwidth = 0.25, boundary = 0, color = "black", alpha = 0.8) +
+  facet_grid(variable ~ state, scales = "free_y") +
+  geom_text(
+    data = anno_df,
+    aes(x = Inf, y = Inf, label = label), 
+    inherit.aes = FALSE,
+    hjust = 1.2, vjust = 1.5, fontface = "bold", size = 3.5, color = "grey30"
+  ) +
+  scale_fill_manual(values = c("Decreasing" = "#3b528b", "Increasing" = "#e35932")) +
+  scale_x_continuous(breaks = seq(0, 15, by = 1)) +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "EDA: Continuous Ramping Durations for Moisture Gaps",
+    subtitle = "Histograms of consecutive increasing/decreasing trajectories",
+    x = "Continuous Duration (Hours)",
+    y = "Count of Occurrences"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+As demonstrated in @fig-moisture-gaps-rle, while the majority of shifts resolve rapidly, the system also undergoes continuous moisture ramps stretching across several hours. Incorporating the temporal history of these margins is likely essential to describe the HVAC system functioning. 
+
+Let $x \in \{ \text{humidity\_delta, supply\_margin, return\_margin} \}$ represent a given moisture gap, and $j$ represent the number of consecutive 15-minute intervals moving in the same continuous direction. The complete set of engineered features mapping the system's moisture state is defined as:
+
+$$
+\begin{aligned} 
+\text{humidity\_delta}(t) &= \text{rh\_supply}(t) - \text{rh\_return}(t) \\ 
+\text{supply\_margin}(t) &= \text{t\_supply}(t) - \text{t\_saturation}(t) \\ 
+\text{return\_margin}(t) &= \text{t\_return}(t) - \text{t\_saturation}(t) 
+\end{aligned}
+$$
+
+$$
+\begin{aligned} 
+\Delta x_{15m}(t) &= x(t) - x(t-1) \\ 
+\text{run\_length}_x(t) &= j \times \text{direction} \\ 
+\text{displacement}_x(t) &= \sum_{i=0}^{j-1} \Delta x_{15m}(t-i) 
+\end{aligned}
+$$
+
+### Summary of Engineered Features
+
+
+The feature engineering phase transforms the raw sensor logs into a 24-dimensional geometric manifold. The complete feature set is summarized in the table below using standard mathematical notation.
+
+| Category | Engineered Feature | Mathematical Definition |
+| :--- | :--- | :--- |
+| **Power & Energy** | `dw_power(t)`<br>`dw_energy(t)` | $\text{power(t)} \times (\text{power}(t) - \text{power}(t-1))$<br>$\text{energy}(t) \times (\text{energy}(t) - \text{energy}(t-1))$ |
+| **Outdoor Environment** | `d_rh_outdoor(t)`<br>`d_t_outdoor(t)` | $\text{rh\_outdoor}(t) - \text{rh\_outdoor}(t-1)$<br>$\text{t\_outdoor}(t) - \text{t\_outdoor}(t-1)$ |
+| **Indoor Return Temp** | `d_t_return_15m(t)`<br>`t_ret_run_length(t)`<br>`t_ret_displacement(t)` | $\text{t\_return}(t) - \text{t\_return}(t-1)$<br>$k \times \text{direction}$<br>$\sum_{i=0}^{k-1} \Delta \text{t\_return}_{15m}(t-i)$ |
+| **System Error & Thermal Effort** | `control_error(t)`<br>`supply_delta(t)`<br>`d_t_supply_15m(t)`<br>`t_sup_run_length(t)`<br>`t_sup_displacement(t)` | $\text{t\_return}(t) - \text{sp\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_supply}(t-1)$<br>$j \times \text{direction}$<br>$\sum_{i=0}^{j-1} \Delta \text{t\_supply}_{15m}(t-i)$ |
+| **Moisture Gaps** | `humidity_delta(t)`<br>`supply_margin(t)`<br>`return_margin(t)` | $\text{rh\_supply}(t) - \text{rh\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_saturation}(t)$<br>$\text{t\_return}(t) - \text{t\_saturation}(t)$ |
+| **Moisture Kinematics** <br>*(Where $x$ is each of the 3 moisture gaps)* | `d_x_15m(t)`<br>`run_length_x(t)`<br>`displacement_x(t)` | $x(t) - x(t-1)$<br>$m \times \text{direction}$<br>$\sum_{i=0}^{m-1} \Delta x_{15m}(t-i)$ |
+
+
+## Archetype Extraction with Engineered Features
+
+We now utilize the set of engineered features to extract fault archetypes.
+
+### Engine Initialization
+
+We initialize the engine, use the engineered-feature YAML configuration, and ingest the time course. To avoid scoring the massive 6-month summer gap as an anomaly, we again split the data into two parts (baseline_telemetry and stream_telemetry), utilizing split index `major_gap_idx` calculated during the [initial data validation step](#data-split-and-validation).
+
+```{r}
+#| label: engine-init-and-split
+#| echo: true
+#| code-fold: show
+#| code-summary: "Initialize Engine and Split Data"
+#| warning: false
+#| message: false
+
+library(dplyr)
+library(lubridate)
+library(isoRouting)
+library(here)
+
+# 1. Load the package data and configure the engine
+data("hvac_features", package = "isoRouting")
+config_engineered <- here("inst", "extdata", "engineered_features.yaml")
+engine_engineered <- new("DiagnosticEngine", config_path = config_engineered)
+engine_engineered <- ingest_time_course(engine_engineered, data = hvac_features)
+
+# 2. Retrieve the validated telemetry mapped by the new YAML
+hvac_valid_eng <- get_time_course(engine_engineered)
+
+# 3. Bucket 1: Pre-Gap (~40% of data) for baseline archetype extraction
+baseline_telemetry <- hvac_valid_eng |> 
+  slice(1:major_gap_idx)
+
+# 4. Bucket 2: Post-Gap (~60% of data) for predictive routing evaluation
+stream_telemetry <- hvac_valid_eng |> 
+  slice((major_gap_idx + 1):n())
+```
+
+### Isolation Forest Training and Score Distribution
+
+With the continuous baseline isolated, we fit the Isolation Forest model. The model dynamically pulls the ensemble size (500 trees) and sample size (256) from the engineered YAML configuration.
+
+```{r}
+#| label: fit-engineered-if
+#| echo: true
+#| code-fold: show
+#| code-summary: "Fit Isolation Forest"
+#| warning: false
+#| message: false
+
+library(dplyr)
+
+# 1. Initialize a baseline-specific engine and ingest only the Winter 2019-2020 data
+engine_baseline <- new("DiagnosticEngine", config_path = config_engineered)
+engine_baseline <- ingest_time_course(engine_baseline, data = baseline_telemetry)
+
+# 2. Fit the Isolation Forest and extract anomalies 
+engine_baseline <- extract_anomalies(engine_baseline)
+
+# 3. Retrieve the scores for the entire baseline dataset
+baseline_scores <- stats::predict(engine_baseline@model, engine_baseline@feature_matrix)
+
+baseline_scored <- baseline_telemetry |>
+  mutate(anomaly_score = baseline_scores)
+```
+
+```{r}
+#| label: fig-engineered-if-dist
+#| echo: true
+#| code-summary: "Plot Score Distribution"
+#| warning: false
+#| message: false
+#| fig-cap: "Distribution of Isolation Forest anomaly scores on the engineered feature manifold."
+
+library(ggplot2)
+
+ggplot(baseline_scored, aes(x = anomaly_score)) +
+  geom_histogram(bins = 100, fill = "#4c72b0", color = "black", alpha = 0.8, linewidth = 0.1) +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "Isolation Forest: Anomaly Score Distribution",
+    subtitle = "Engineered feature manifold (Baseline: Winter 2019-2020)",
+    x = "Anomaly Score",
+    y = "Frequency"
+  )
+```
+
+As seen in @fig-engineered-if-dist, the engineered feature manifold creates a quite structured score distribution. The majority of standard operational telemetry is compressed below the anomaly score of 0.5, and there seem to be two distinct distribution bumps around 0.52 and 0.65. As was done previously with the naive configuration we next utilize method `evaluate_k_stability` to explore thresholds.
+
+### Threshold Diagnostics
+
+```{r}
+#| label: engineered-evaluate-stability
+#| echo: true
+#| code-fold: show
+#| code-summary: "Run evaluate_k_stability"
+#| message: false
+#| warning: false
+
+# Sweep based on statistical substrate size (N) for the engineered manifold
+stability_curve_engineered <- evaluate_k_stability(
+  engine_baseline, 
+  max_N = 800, 
+  min_N = 20, 
+  nb_steps = 61, 
+  max_k = 10
+)
+```
+
+```{r}
+#| label: fig-engineered-evaluate-stability
+#| echo: true
+#| code-fold: show
+#| code-summary: "Plot Engineered Stability Profile"
+#| fig-cap: "Topological stability across anomaly thresholds using the engineered thermodynamic manifold."
+#| fig-height: 12
+#| fig-width: 9
+#| warning: false
+#| message: false
+
+# Generate the plot using the previously defined wrapper function
+fig_engineered <- plot_topological_stability(
+  stability_curve_engineered,
+  plot_title = "Anomaly Threshold Diagnostics: Engineered Manifold",
+  plot_subtitle = "Mapping cluster plateaus (k), distance heterogeneity (D), and variable dependencies breaks (LID)."
+)
+
+print(fig_engineered)
 ```
 
 ```{r}
