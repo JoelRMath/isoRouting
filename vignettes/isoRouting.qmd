@@ -36,6 +36,18 @@ nocite: |
   h4 { font-weight: bold !important; }
 </style>
 
+<style>
+  /* Only animate elements with the flash-target class */
+  .flash-target:target {
+    animation: target-flash 2s ease-out;
+    border-radius: 4px;
+  }
+
+  @keyframes target-flash {
+    0% { background-color: rgba(255, 235, 59, 0.6); } 
+    100% { background-color: transparent; }
+  }
+</style>
 
 ## Motivation: Complex Variable Dependencies in Multivariate Time Series
 
@@ -442,10 +454,11 @@ stability_curve_naive <- evaluate_k_stability(engine, max_N = 800, min_N = 20, n
 
 Method `evaluate_k_stability()` maps the anomaly threshold against three independent diagnostics:
 
-- **Optimal Clusters ($k$)**: At each value of threshold $\theta$, divisive clustering [@kaufman1990finding] is utilized to group anomalies based on their Hamming distances (provided by `isotree`). The optimal number $k$ of clusters (best tree cut) is then defined as the one maximizing the global silhouette score [@rousseeuw1987silhouettes]. Visualization of $k$ as a function of $\theta$ helps identify $\theta$ intervals where clustering is stable.
+- **Optimal Clusters ($k$)**: At each value of threshold $\theta$, divisive clustering [@kaufman1990finding] is utilized to group anomalies. Rather than relying on Euclidean space or native, sample-size-dependent isolation-forest distances, the engine extracts the terminal node matrix from the isolation forest (`isotree`). It then computes the proportional Hamming distance—the fraction of trees in the forest where two observations land in different terminal leaves. Because this metric measures structural disagreement, it is independent of the dataset size. The optimal number $k$ of clusters (best tree cut) is then defined as the one maximizing the global silhouette score [@rousseeuw1987silhouettes]. Visualization of $k$ as a function of $\theta$ helps identify $\theta$ intervals where clustering is stable.
 - **Hartigan's Dip Statistic ($D$)**: The statistic (effect size) of a non-parametric test applied to the Hamming distance matrix. A peak in $D$ rejects the hypothesis of unimodality, indicating maximum distance heterogeneity (i.e., the likely presence of highly distinct clusters) [@hartigan1985dip].
 - **Local Intrinsic Dimensionality (LID)**: Measures how many variables remain independent. A decrease in LID suggests a system "breakdown," where variables become more coupled due to a physical fault (e.g. a sensor break will decrease variance of a variable).
 
+<b id="stability-ggplot-target" class="flash-target">Diagnostics Plotting Wrapper</b>
 ```{r}
 #| label: stability-ggplot-function
 #| echo: true
@@ -702,6 +715,7 @@ target_k <- NULL
 engine <- extract_medoids(engine, threshold = th_maxD_naive, k = target_k)
 ```
 
+<b id="medoids-ggplot-target" class="flash-target">Medoids Plotting Wrapper</b>
 ```{r}
 #| label: medoids-ggplot-function
 #| message: false
@@ -715,15 +729,20 @@ library(tidyr)
 library(stringr)
 
 # Define the medoid plotting wrapper
-plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, label_style = "numeric") {
+plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, label_style = "numeric", vars_to_plot = NULL) {
   
   raw_medoids <- get_medoids(medoid_engine)
   schema <- get_features(medoid_engine)
   
-  plot_vars <- intersect(
-    c(schema$context_variables, schema$target_variables), 
-    colnames(raw_medoids)
-  )
+  # Allow targeting specific variables to prevent visual clutter
+  if (is.null(vars_to_plot)) {
+    plot_vars <- intersect(
+      c(schema$context_variables, schema$target_variables), 
+      colnames(raw_medoids)
+    )
+  } else {
+    plot_vars <- intersect(vars_to_plot, colnames(raw_medoids))
+  }
   
   format_var_name <- function(x) {
     str_to_title(str_replace_all(str_replace_all(x, "_15m", ""), "_", " "))
@@ -752,13 +771,11 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, l
   plot_data <- raw_medoids |>
     mutate(
       Relative_Time = as.numeric(difftime(timestamp, medoid_timestamp, units = "hours")),
-      # Dynamically assign Archetype labels based on the selected style
       Archetype = if (label_style == "alpha") {
         paste("Archetype", LETTERS[as.numeric(str_extract(cluster, "\\d+"))])
       } else {
         str_replace(cluster, "Cluster", "Archetype")
       },
-      # Calculate distance from t=0 (1 at t=0, approaches 0 at the edges)
       Proximity = 1 - (abs(Relative_Time) / max(abs(Relative_Time), na.rm = TRUE))
     ) |>
     pivot_longer(
@@ -772,15 +789,13 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, l
   
   p <- ggplot(plot_data, aes(x = Relative_Time, y = Value, color = Variable_Clean)) +
     geom_vline(xintercept = 0, linetype = "dashed", color = "black", alpha = 0.5) +
-    # Map both opacity and line thickness to proximity to t=0
     geom_line(aes(alpha = Proximity, linewidth = Proximity)) +
-    # Anchor point at exactly t=0
     geom_point(
       data = function(x) filter(x, Relative_Time == 0), 
       shape = 21, 
-      color = "black",          # Crisp border
-      size = 3.5,               # Large anchor size
-      stroke = 0.8,             # Border thickness
+      color = "black",          
+      size = 3.5,               
+      stroke = 0.8,             
       aes(fill = Variable_Clean)
     ) +
     geom_blank(data = blank_data, aes(x = 0, y = Value), inherit.aes = FALSE) + 
@@ -809,6 +824,7 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, l
   return(p)
 }
 ```
+
 
 ```{r}
 #| label: fig-naive-medoids
@@ -1619,7 +1635,7 @@ ggplot(all_runs, aes(x = duration_hours, fill = state)) +
   )
 ```
 
-As demonstrated in @fig-moisture-gaps-rle, while the majority of shifts resolve rapidly, the system also undergoes continuous moisture ramps stretching across several hours. Incorporating the temporal history of these margins is likely essential to describe the HVAC system functioning. 
+As demonstrated in @fig-moisture-gaps-rle, while the majority of shifts resolve rapidly, the system also undergoes continuous moisture ramps stretching across several hours. Incorporating the temporal history of these margins is likely essential to describe the HVAC system functioning. This history is encoded as was done before with the temperature gaps: signed duration (run length) and cumulative displacement.
 
 Let $x \in \{ \text{humidity\_delta, supply\_margin, return\_margin} \}$ represent a given moisture gap, and $j$ represent the number of consecutive 15-minute intervals moving in the same continuous direction. The complete set of engineered features mapping the system's moisture state is defined as:
 
@@ -1695,7 +1711,7 @@ stream_telemetry <- hvac_valid_eng |>
 
 ### Isolation Forest Training and Score Distribution
 
-With the continuous baseline isolated, we fit the Isolation Forest model. The model dynamically pulls the ensemble size (500 trees) and sample size (256) from the engineered YAML configuration.
+With the continuous baseline (`baseline_telemetry`), we now fit the Isolation Forest model. The model dynamically pulls the ensemble size (500 trees) and sample size (256) from the engineered YAML configuration.
 
 ```{r}
 #| label: fit-engineered-if
@@ -1727,7 +1743,7 @@ baseline_scored <- baseline_telemetry |>
 #| code-summary: "Plot Score Distribution"
 #| warning: false
 #| message: false
-#| fig-cap: "Distribution of Isolation Forest anomaly scores on the engineered feature manifold."
+#| fig-cap: "Distribution of Isolation Forest anomaly scores with the engineered features."
 
 library(ggplot2)
 
@@ -1735,16 +1751,18 @@ ggplot(baseline_scored, aes(x = anomaly_score)) +
   geom_histogram(bins = 100, fill = "#4c72b0", color = "black", alpha = 0.8, linewidth = 0.1) +
   theme_bw(base_size = 12) +
   labs(
-    title = "Isolation Forest: Anomaly Score Distribution",
-    subtitle = "Engineered feature manifold (Baseline: Winter 2019-2020)",
+    title = "Anomaly Score Distribution",
+    subtitle = "Engineered features (Baseline: Winter 2019-2020)",
     x = "Anomaly Score",
     y = "Frequency"
   )
 ```
 
-As seen in @fig-engineered-if-dist, the engineered feature manifold creates a quite structured score distribution. The majority of standard operational telemetry is compressed below the anomaly score of 0.5, and there seem to be two distinct distribution bumps around 0.52 and 0.65. As was done previously with the naive configuration we next utilize method `evaluate_k_stability` to explore thresholds.
+As seen in @fig-engineered-if-dist, the majority of standard telemetry is compressed below the anomaly score of 0.5. There are two distinct distribution bumps around 0.52 and 0.65. As was done previously with the naive configuration we next utilize method `evaluate_k_stability` to explore anomaly score thresholds. We do it here by varying the number $N$ of anomalies above the threshold.
 
 ### Threshold Diagnostics
+
+We first utilize method `evaluate_k_stability` to retrieve the diagnostics profiles.
 
 ```{r}
 #| label: engineered-evaluate-stability
@@ -1754,7 +1772,7 @@ As seen in @fig-engineered-if-dist, the engineered feature manifold creates a qu
 #| message: false
 #| warning: false
 
-# Sweep based on statistical substrate size (N) for the engineered manifold
+# Sweep based on size (N)
 stability_curve_engineered <- evaluate_k_stability(
   engine_baseline, 
   max_N = 800, 
@@ -1764,12 +1782,13 @@ stability_curve_engineered <- evaluate_k_stability(
 )
 ```
 
+We then plot the profiles with the [previously defined wrapper](#stability-ggplot-target).
+
 ```{r}
 #| label: fig-engineered-evaluate-stability
 #| echo: true
-#| code-fold: show
-#| code-summary: "Plot Engineered Stability Profile"
-#| fig-cap: "Topological stability across anomaly thresholds using the engineered thermodynamic manifold."
+#| code-summary: "Plot Diagnostics Profile"
+#| fig-cap: "Diagnositic scores across anomaly thresholds (800 < N < 20)."
 #| fig-height: 12
 #| fig-width: 9
 #| warning: false
@@ -1778,12 +1797,673 @@ stability_curve_engineered <- evaluate_k_stability(
 # Generate the plot using the previously defined wrapper function
 fig_engineered <- plot_topological_stability(
   stability_curve_engineered,
-  plot_title = "Anomaly Threshold Diagnostics: Engineered Manifold",
-  plot_subtitle = "Mapping cluster plateaus (k), distance heterogeneity (D), and variable dependencies breaks (LID)."
+  plot_title = "Anomaly Threshold Diagnostics with Engineered Features",
+  plot_subtitle = "Optimal cluster number (k), distance heterogeneity (D), and variable dependencies breaks (LID)."
 )
 
 print(fig_engineered)
 ```
+
+@fig-engineered-evaluate-stability shows that distance heterogeneity between anomalies (D) is maximum between thresholds 0.59 and 0.61. In this interval, uncoupling between variables (LID) remains high, before following an overall decreasing trend. Therefore, we choose to explore the anomalies at threshold T = 0.6.
+
+### Medoids Extraction
+
+We now extract the medoids (representatives of clustered anomalies) at T = 0.6.
+
+```{r}
+#| label: extract-engineered-medoids
+#| echo: true
+#| code-fold: show
+#| code-summary: "Extract Archetypes at T = 0.6"
+#| warning: false
+#| message: false
+
+# 1. Isolate the top anomalies right after Hartigan's D peak
+engine_baseline <- extract_medoids(engine_baseline, threshold = 0.6)
+
+# 2. Retrieve the extracted physical archetypes (medoids)
+medoids_df <- get_medoids(engine_baseline)
+
+# 3. Print the mathematically calibrated k-value
+cat("Mathematically Calibrated k at threshold = 0.6:", engine_baseline@optimal_k, "\n")
+```
+
+As shown above, the optimal number of clusters (maximum global silhouette score) is k = 4 at T = 0.6. 
+
+We next display the time course of the extracted medoids utilizing the [previously defined wrapper](#medoids-ggplot-target) and visualizing only the `context_variables` defined in the YAML configuration.
+
+```{r}
+#| label: fig-engineered-comprehensive-medoids
+#| echo: true
+#| code-summary: "Plot Archetype Trajectories"
+#| fig-cap: "Time-course of the extracted 4 anomaly archetypes at T = 0.6."
+#| fig-height: 14
+#| fig-width: 10
+#| warning: false
+#| message: false
+
+# Retrieve the 10 context variables defined in the YAML
+schema <- get_features(engine_baseline)
+context_vars <- schema$context_variables
+
+# Generate the plot
+fig_medoids_comprehensive <- plot_medoid_trajectories(
+  engine_baseline,
+  plot_title = "Trajectories of the Four Archetypes at T = 0.6",
+  plot_subtitle = "Trajectories of the context variables.",
+  label_style = "numeric",
+  vars_to_plot = context_vars
+)
+
+print(fig_medoids_comprehensive)
+```
+
+@fig-engineered-comprehensive-medoids is described as follows.
+
+- **Archetype 1:** Characterized by a dip in supply temperature and a simultaneous spike in supply relative humidity at $t=0$. Return variables, outdoor variables, and the return setpoint remain stable. Power and energy show no deviation. This profile indicates a brief, unpowered humidity disturbance, which disrupts the supply air moisture without engaging the unit's power.   
+- **Archetype 2:** Likely represents a commanded system startup. At $t=0$, both power and energy exhibit a large, sustained step-up from near zero. This is instantly coupled with a rise in both supply and return temperatures. Consequently, the supply and return relative humidity drop, reflecting heating air without adding moisture. The return setpoint and outdoor variables remain constant.   
+- **Archetype 3:** Defines a thermal anomaly. The supply temperature undergoes a large, upward spike at $t=0$ and remains elevated. This temperature surge drives down the supply relative humidity. However, unlike Archetype 2, power and energy remain flat and near zero. This decoupling of thermal output from electrical input suggests an external mechanical failure.   
+- **Archetype 4:** Represents a hard system shutdown or loss of power. The electrical power and energy drop instantaneously to zero. As a result, the supply and return temperatures begin a continuous downward decay. Inversely, the supply and return relative humidity climb steadily. The setpoint and outdoor variables remain flat throughout the decay.
+
+In order to facilitate interpretation of the archetypes, `isoRouting` implements Leave One Covariate Out (LOCO) ablation tests in method `ablate_features`. Namely, anomaly scores of the extracted medoids are recomputed after setting one of the `target_variables` to its median value over the entire dataset. This is done for each target variable, and they are then sorted for their contribution to the archetype anomaly score.
+
+```{r}
+#| label: ablation-tests
+#| echo: true
+#| code-fold: show
+#| code-summary: "Ablation Tests"
+#| warning: false
+#| message: false
+
+ablation_results <- ablate_features(engine_baseline)
+```
+
+```{r}
+#| label: ablation-ggplot-function
+#| echo: true
+#| code-summary: "Show Ablation Plot Function"
+#| message: false
+#| warning: false
+
+library(ggplot2)
+library(dplyr)
+
+# Reusable ablation plotting wrapper
+plot_ablation_importance <- function(ablation_df, top_n = 5, plot_title, plot_subtitle) {
+  
+  # Filter to Top N drivers per cluster and retain raw variable names
+  plot_data <- ablation_df |>
+    group_by(cluster) |>
+    slice_head(n = top_n) |>
+    ungroup() |>
+    mutate(
+      # Create a unique factor for faceted reordering using the raw variable name
+      var_ordered = factor(paste(cluster, variable, sep = "__"))
+    ) |>
+    # Reorder based on the magnitude of the score drop
+    mutate(var_ordered = reorder(var_ordered, score_drop))
+  
+  # Generate the plot
+  p <- ggplot(plot_data, aes(x = score_drop, y = var_ordered, fill = cluster)) +
+    geom_col(color = "black", linewidth = 0.3, alpha = 0.8) +
+    facet_wrap(~cluster, scales = "free_y") +
+    # Strip the cluster prefix to display just the raw variable name
+    scale_y_discrete(labels = function(x) gsub(".*__", "", x)) +
+    scale_fill_viridis_d(option = "turbo") +
+    theme_bw(base_size = 12) +
+    labs(
+      title = plot_title,
+      subtitle = plot_subtitle,
+      x = "Anomaly Score Drop (Contribution Magnitude)",
+      y = "Engineered Feature (Raw)"
+    ) +
+    theme(
+      legend.position = "none",
+      strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+      strip.text = element_text(face = "bold")
+    )
+  
+  return(p)
+}
+```
+
+```{r}
+#| label: fig-ablation-results
+#| echo: true
+#| code-fold: true
+#| code-summary: "Plot Feature Contribution"
+#| fig-cap: "Top 5 engineered features driving the anomaly score for each medoid archetype, ranked by LOCO ablation."
+#| fig-height: 8
+#| fig-width: 10
+#| warning: false
+#| message: false
+
+# 1. Run the ablation test directly through the S4 API
+ablation_results <- ablate_features(engine_baseline)
+
+# 2. Generate the plot using the wrapper
+fig_ablation <- plot_ablation_importance(
+  ablation_results, 
+  top_n = 5,
+  plot_title = "Medoid Interpretation via Feature Ablation",
+  plot_subtitle = "Decrease in anomaly score when feature is reverted to its global median"
+)
+
+print(fig_ablation)
+```
+
+The LOCO ablation results explain the behaviors visually identified in the multi-variable trajectories. 
+
+*   **Archetype 1:** The top two driving features are exclusively moisture-related (`d_humidity_delta` and `humidity_delta`). The complete absence of power features driving this score confirms the model isolated this state based purely on a transient, unpowered humidity disturbance.
+*   **Archetype 2:** Electrical power (`dw_power`) acts as the primary trigger, followed immediately by thermal and energy derivatives. This validates the visual assessment of a commanded system startup.
+*   **Archetype 3:** The anomaly score is driven by extreme deviations in thermal derivatives and margins (e.g., `d_t_supply_15m`, `d_supply_margin`). Crucially, power features do not appear in the top drivers. This mathematical decoupling confirms an unmetered thermal bleed, verifying that heat is entering the system externally.
+*   **Archetype 4:** Dominated by a combination of collapsing margins (`d_supply_margin`, `displacement_return_margin`) and temperature short-term derivatives. This again suggests a hard system shutdown.
+
+### Forensic Ledger
+
+Once the optimal number of clusters is validated and the medoids are extracted, the next step is to lock in the baseline. The `commit_ledger()` method finalizes this state by mapping every isolated anomaly in the historical data to its closest archetype (medoid) based on the Hamming distance derived from the isolation forest.
+
+```{r}
+#| label: commit-ledger
+#| echo: true
+#| code-fold: show
+#| code-summary: "Show Ledger Commit"
+#| message: false
+#| warning: false
+
+# Lock the baseline and map all historical anomalies
+engine_baseline <- commit_ledger(engine_baseline)
+
+# Extract the flat dataframe for analysis
+baseline_ledger <- get_ledger(engine_baseline)
+head(baseline_ledger[,1:4], 10)
+```
+
+Only the first four columns are displayed above, but the ledger also contains all target and context variables for all anomalies that have a score above the chosen threshold. 
+
+This means that we can summarize the obtained clusters by using the ledger as follows.
+
+```{r}
+#| label: ledger-summary
+#| echo: true
+#| code-fold: show
+#| code-summary: "Summarize Ledger"
+#| warning: false
+#| message: false
+
+library(dplyr)
+library(knitr)
+
+# Generate a high-level operational summary of the baseline period
+ledger_summary <- baseline_ledger |>
+  group_by(anomaly_cluster) |>
+  summarise(
+    Total_Occurrences = n(),
+    First_Seen = min(as.Date(timestamp)),
+    Last_Seen = max(as.Date(timestamp)),
+    Median_Score = round(median(anomaly_score), 3),
+    Max_Distance = round(max(topological_distance), 3)
+  ) |>
+  arrange(desc(Total_Occurrences))
+
+kable(ledger_summary, caption = "Summary of historical anomaly archetypes.")
+```
+
+`Max_Distance` represents the *radius* of the cluster. It measures the forest-based distance between the archetype (medoid, distance = 0) and the furthest point that belongs to that cluster.
+
+```{r}
+#| label: eda-cumulative-faults
+#| echo: true
+#| message: false
+#| warning: false
+
+library(ggplot2)
+library(dplyr)
+
+# Calculate cumulative occurrences over time for each archetype
+cumulative_ledger <- baseline_ledger |>
+  arrange(timestamp) |>
+  group_by(anomaly_cluster) |>
+  mutate(cumulative_count = row_number()) |>
+  ungroup()
+
+# Plot the cumulative step curves
+ggplot(cumulative_ledger, aes(x = timestamp, y = cumulative_count, color = anomaly_cluster)) +
+  geom_step(linewidth = 1.2, alpha = 0.8) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "Cumulative Frequency of Fault Archetypes (Baseline Period)",
+    subtitle = "Accelerating curves indicate progressive mechanical degradation",
+    x = "Timeline",
+    y = "Cumulative Occurrences",
+    color = "Archetype"
+  ) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+#| label: eda-operational-scatter
+#| echo: true
+#| message: false
+#| warning: false
+
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(hms)
+
+scatter_data <- baseline_ledger |>
+  mutate(
+    date = as.Date(timestamp),
+    time_of_day = as_hms(timestamp)
+  )
+
+ggplot(scatter_data, aes(x = date, y = time_of_day, color = anomaly_cluster)) +
+  # We map size to distance. Smaller distance = larger point (closer to pure medoid)
+  geom_point(aes(size = topological_distance), alpha = 0.6) +
+  scale_size_continuous(
+    trans = "reverse", 
+    range = c(6, 1), 
+    name = "Topological Distance\n(Larger = closer to medoid)"
+  ) +
+  scale_y_time(breaks = scales::breaks_width("4 hours")) +
+  scale_color_viridis_d(option = "turbo", guide = "none") +
+  facet_wrap(~anomaly_cluster, ncol = 2) +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "Operational Footprint of Fault Archetypes",
+    subtitle = "Y-axis isolates time of day; Point size reflects proximity to the medoid",
+    x = "Date",
+    y = "Time of Day (Local)"
+  ) +
+  theme(
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+```{r}
+#| label: ledger-ggplot-function
+#| echo: true
+#| code-summary: "Show Cumulative Plot Function"
+#| message: false
+#| warning: false
+
+library(ggplot2)
+library(dplyr)
+
+plot_cumulative_faults <- function(ledger_df, plot_title, plot_subtitle) {
+  
+  plot_data <- ledger_df |>
+    arrange(timestamp) |>
+    group_by(anomaly_cluster) |>
+    mutate(cumulative_count = row_number()) |>
+    ungroup()
+  
+  p <- ggplot(plot_data, aes(x = timestamp, y = cumulative_count, color = anomaly_cluster)) +
+    geom_step(linewidth = 1.2, alpha = 0.8) +
+    scale_color_viridis_d(option = "turbo", labels = function(x) gsub("_", " ", x)) +
+    theme_bw(base_size = 12) +
+    labs(
+      title = plot_title,
+      subtitle = plot_subtitle,
+      x = "Timeline",
+      y = "Cumulative Occurrences",
+      color = "Archetype"
+    ) +
+    theme(
+      legend.position = "bottom",
+      panel.grid.minor = element_blank()
+    )
+  
+  return(p)
+}
+```
+
+```{r}
+#| label: ledger-scatter-function
+#| echo: true
+#| code-summary: "Show Operational Scatter Wrapper"
+#| message: false
+#| warning: false
+
+library(ggplot2)
+library(lubridate)
+library(hms)
+
+plot_operational_footprint <- function(ledger_df, plot_title, plot_subtitle) {
+  
+  scatter_data <- ledger_df |>
+    mutate(
+      date = as.Date(timestamp),
+      time_of_day = as_hms(timestamp)
+    )
+  
+  p <- ggplot(scatter_data, aes(x = date, y = time_of_day, color = anomaly_cluster)) +
+    geom_point(aes(size = topological_distance), alpha = 0.6) +
+    scale_size_continuous(
+      trans = "reverse", 
+      range = c(6, 1), 
+      name = "Topological Distance\n(Larger = closer to medoid)"
+    ) +
+    scale_y_time(breaks = scales::breaks_width("4 hours")) +
+    scale_color_viridis_d(option = "turbo", guide = "none") +
+    facet_wrap(~anomaly_cluster, ncol = 2) +
+    theme_bw(base_size = 12) +
+    labs(
+      title = plot_title,
+      subtitle = plot_subtitle,
+      x = "Date",
+      y = "Time of Day (Local)"
+    ) +
+    theme(
+      strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+      strip.text = element_text(face = "bold"),
+      panel.grid.minor = element_blank()
+    )
+  
+  return(p)
+}
+```
+
+```{r}
+#| label: eda-higher-threshold
+#| echo: true
+#| message: true
+#| warning: false
+
+# 1. Branch the engine to protect the T=0.6 baseline
+engine_high_T <- engine_baseline
+
+# 2. Extract medoids at the higher threshold (this automatically re-runs anomalies, distances, and calibration)
+engine_high_T <- extract_medoids(engine_high_T, threshold = 0.64)
+
+# 3. Print the new mathematically calibrated k-value for the extreme tail
+cat("Optimal k at threshold 0.64:", engine_high_T@optimal_k, "\n")
+
+# 4. Commit and extract the new ledger
+engine_high_T <- commit_ledger(engine_high_T)
+ledger_high_T <- get_ledger(engine_high_T)
+
+# 5. Let's look at the cumulative curves for these extreme events
+fig_cum_high_T <- plot_cumulative_faults(
+  ledger_high_T, 
+  plot_title = "Cumulative Frequency at Extreme Threshold (T=0.64)",
+  plot_subtitle = "Looking for accelerating curves indicating mechanical degradation"
+)
+
+# 6. And the operational scatter plot to see when they happen
+fig_scatter_high_T <- plot_operational_footprint(
+  ledger_high_T,
+  plot_title = "Operational Footprint at Extreme Threshold (T=0.64)",
+  plot_subtitle = "Y-axis isolates time of day; Point size reflects proximity to medoid"
+)
+
+print(fig_cum_high_T)
+print(fig_scatter_high_T)
+```
+
+
+```{r}
+#| label: eda-lower-threshold
+#| echo: true
+#| message: true
+#| warning: false
+
+# 1. Branch the engine again
+engine_low_T <- engine_baseline
+
+# 2. Extract medoids at the lower threshold
+engine_low_T <- extract_medoids(engine_low_T, threshold = 0.58)
+
+# 3. Verify the optimal k (expecting k = 6 based on the stability profile)
+cat("Optimal k at threshold 0.58:", engine_low_T@optimal_k, "\n")
+
+# 4. Commit the ledger and extract
+engine_low_T <- commit_ledger(engine_low_T)
+ledger_low_T <- get_ledger(engine_low_T)
+
+# 5. Plot the cumulative frequency to hunt for the exponential abrasion curve
+fig_cum_low_T <- plot_cumulative_faults(
+  ledger_low_T, 
+  plot_title = "Cumulative Frequency at Lower Threshold (T=0.58)",
+  plot_subtitle = "Hunting for accelerating curves (progressive degradation)"
+)
+
+# 6. Plot the operational scatter
+fig_scatter_low_T <- plot_operational_footprint(
+  ledger_low_T,
+  plot_title = "Operational Footprint at Lower Threshold (T=0.58)",
+  plot_subtitle = "Y-axis isolates time of day; Point size reflects proximity to medoid"
+)
+
+print(fig_cum_low_T)
+print(fig_scatter_low_T)
+```
+
+```{r}
+#| label: eda-spearman-creep
+#| echo: true
+#| message: true
+#| warning: false
+
+library(ggplot2)
+library(dplyr)
+
+# 1. Extract the fully scored timeline using the new accessor
+full_scored_data <- get_scored_time_course(engine_baseline)
+
+# 2. Run Spearman's Rank Correlation Test
+# H0: No monotonic trend between time and anomaly score
+# HA: Anomaly scores monotonically increase (or decrease) over time
+trend_test <- cor.test(
+  as.numeric(full_scored_data$timestamp), 
+  full_scored_data$anomaly_score, 
+  method = "spearman", 
+  exact = FALSE
+)
+
+cat("Spearman Rank Correlation (rho):", round(trend_test$estimate, 4), "\n")
+cat("p-value:", signif(trend_test$p.value, 4), "\n")
+
+if(trend_test$p.value < 0.05 && trend_test$estimate > 0) {
+  cat("Verdict: Statistically significant upward creep detected.\n")
+} else {
+  cat("Verdict: No significant continuous upward trend.\n")
+}
+
+# 3. Visualize the un-thresholded scores to see the "sub-clinical" behavior
+ggplot(full_scored_data, aes(x = timestamp, y = anomaly_score)) +
+  # Use high transparency since there are tens of thousands of points
+  geom_point(alpha = 0.05, size = 0.5, color = "grey50") +
+  # GAM smoother to capture non-linear creeps over time
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), 
+              color = "darkred", linewidth = 1.2, se = TRUE) +
+  # Add our T=0.6 threshold line for context
+  geom_hline(yintercept = 0.6, linetype = "dashed", color = "blue", linewidth = 1) +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "Full-Spectrum Anomaly Score Trend",
+    subtitle = "Testing for 'sub-clinical' mechanical degradation via Spearman's rho",
+    x = "Timeline",
+    y = "Raw Isolation Forest Score"
+  )
+```
+
+```{r}
+#| label: eda-full-routing
+#| echo: true
+#| message: true
+#| warning: false
+
+# Helper function to route the entire timeline to the committed medoids
+route_full_timeline <- function(engine, max_distance = 0.45) {
+  
+  # 1. Get full scored data and raw features
+  full_data <- get_scored_time_course(engine)
+  features <- engine@feature_matrix
+  medoid_sigs <- engine@baseline_signatures
+  
+  k <- nrow(medoid_sigs)
+  n_trees <- ncol(medoid_sigs)
+  
+  message("Extracting terminal nodes for the entire dataset...")
+  # O(N) complexity - very fast
+  full_sigs <- stats::predict(engine@model, features, type = "tree_num")
+  
+  message("Computing topological distances to medoids...")
+  # Initialize distance matrix (N x k)
+  dist_mat <- matrix(NA, nrow = nrow(full_data), ncol = k)
+  colnames(dist_mat) <- rownames(medoid_sigs)
+  
+  for (i in 1:k) {
+    # Vectorized Hamming distance: compare all N points to medoid i
+    disagreements <- colSums(t(full_sigs) != medoid_sigs[i, ])
+    dist_mat[, i] <- disagreements / n_trees
+  }
+  
+  # 2. Find the closest medoid for each point
+  closest_idx <- max.col(-dist_mat, ties.method = "first")
+  min_dists <- dist_mat[cbind(1:nrow(dist_mat), closest_idx)]
+  
+  # 3. Assign labels and distances
+  full_data$closest_archetype <- colnames(dist_mat)[closest_idx]
+  full_data$distance_to_archetype <- min_dists
+  
+  # 4. Enforce the "Other/Normal" bucket
+  full_data$archetype_bucket <- ifelse(
+    full_data$distance_to_archetype > max_distance,
+    "Background Noise",
+    full_data$closest_archetype
+  )
+  
+  return(full_data)
+}
+
+# --- Execution ---
+
+# 1. Route the timeline
+routed_timeline <- route_full_timeline(engine_baseline, max_distance = 0.45)
+
+# 2. Quick summary of the bucketing
+table(routed_timeline$archetype_bucket)
+
+# 3. Plot the sub-clinical creep, faceted by Archetype
+library(ggplot2)
+
+# Filter out background noise so we only look at points topologically related to our faults
+creeping_faults <- subset(routed_timeline, archetype_bucket != "Background Noise")
+
+ggplot(creeping_faults, aes(x = timestamp, y = anomaly_score, color = archetype_bucket)) +
+  geom_point(alpha = 0.2, size = 1) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), 
+              color = "black", linewidth = 1.2) +
+  geom_hline(yintercept = 0.6, linetype = "dashed", color = "red") +
+  facet_wrap(~archetype_bucket, ncol = 2) +
+  scale_color_viridis_d(option = "turbo", guide = "none") +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "Sub-Clinical Anomaly Creep by Archetype",
+    subtitle = "Tracking specific mechanical states before they breach the threshold",
+    x = "Timeline",
+    y = "Anomaly Score"
+  ) +
+  theme(strip.background = element_rect(fill = "#f0f0f0"))
+```
+
+```{r}
+#| label: eda-empirical-radii
+#| echo: true
+#| message: true
+#| warning: false
+
+library(dplyr)
+library(ggplot2)
+
+# 1. Extract and align the Empirical Radii from the baseline ledger
+empirical_radii <- baseline_ledger |>
+  group_by(anomaly_cluster) |>
+  summarise(event_horizon = max(topological_distance)) |>
+  # Fix the naming mismatch between extract_medoids and commit_ledger
+  mutate(anomaly_cluster = gsub("_", " ", anomaly_cluster)) |> 
+  tibble::deframe() # Converts to a named numeric vector
+
+cat("Calculated Empirical Radii (Event Horizons):\n")
+print(round(empirical_radii, 3))
+
+# 2. Re-write the routing function to use the dynamic radii
+route_timeline_empirically <- function(engine, radii) {
+  
+  full_data <- get_scored_time_course(engine)
+  features <- engine@feature_matrix
+  medoid_sigs <- engine@baseline_signatures
+  
+  k <- nrow(medoid_sigs)
+  n_trees <- ncol(medoid_sigs)
+  
+  full_sigs <- stats::predict(engine@model, features, type = "tree_num")
+  
+  dist_mat <- matrix(NA, nrow = nrow(full_data), ncol = k)
+  colnames(dist_mat) <- rownames(medoid_sigs)
+  
+  for (i in 1:k) {
+    disagreements <- colSums(t(full_sigs) != medoid_sigs[i, ])
+    dist_mat[, i] <- disagreements / n_trees
+  }
+  
+  # Find closest medoid and its distance
+  closest_idx <- max.col(-dist_mat, ties.method = "first")
+  closest_clusters <- colnames(dist_mat)[closest_idx]
+  min_dists <- dist_mat[cbind(1:nrow(dist_mat), closest_idx)]
+  
+  full_data$closest_archetype <- closest_clusters
+  full_data$distance_to_archetype <- min_dists
+  
+  # 3. Apply the specific empirical radius for each point's closest cluster
+  point_specific_radii <- radii[closest_clusters]
+  
+  full_data$archetype_bucket <- ifelse(
+    min_dists <= point_specific_radii,
+    closest_clusters,
+    "Background Noise"
+  )
+  
+  return(full_data)
+}
+
+# Execute the new routing
+routed_empirical <- route_timeline_empirically(engine_baseline, empirical_radii)
+
+# Check how the bucketing adjusted based on the true topological shapes
+cat("\nRouting Distribution using Empirical Radii:\n")
+print(table(routed_empirical$archetype_bucket))
+
+# Plot the creeping faults again with the true boundaries
+creeping_empirical <- subset(routed_empirical, archetype_bucket != "Background Noise")
+
+ggplot(creeping_empirical, aes(x = timestamp, y = anomaly_score, color = archetype_bucket)) +
+  geom_point(alpha = 0.2, size = 1) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), 
+              color = "black", linewidth = 1.2) +
+  geom_hline(yintercept = 0.6, linetype = "dashed", color = "red") +
+  facet_wrap(~archetype_bucket, ncol = 2) +
+  scale_color_viridis_d(option = "turbo", guide = "none") +
+  theme_bw(base_size = 12) +
+  labs(
+    title = "Sub-Clinical Anomaly Creep (Empirical Radii)",
+    subtitle = "Archetypes bounded strictly by their historical maximum topological variance",
+    x = "Timeline",
+    y = "Anomaly Score"
+  ) +
+  theme(strip.background = element_rect(fill = "#f0f0f0"))
+```
+
 
 ```{r}
 knitr::knit_exit()

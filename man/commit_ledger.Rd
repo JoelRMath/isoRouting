@@ -4,12 +4,12 @@
 \alias{commit_ledger}
 \title{Commit Forensic Ledger}
 \usage{
-commit_ledger(object, k)
+commit_ledger(object, k = NULL)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}
 
-\item{k}{Integer. The finalized number of distinct states.}
+\item{k}{Integer. Optional. The finalized number of distinct states. Defaults to optimal_k.}
 }
 \value{
 An updated DiagnosticEngine object ready for historical export.

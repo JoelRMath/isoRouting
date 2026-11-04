@@ -12,6 +12,7 @@
 #' @slot hyperparameters list. Machine learning tuning parameters (thresholds, ntrees).
 #' @slot domain_state character. Current lifecycle state of the engine.
 #' @slot raw_time_course data.frame. The base ingested dataset.
+#' @slot scored_time_course data.frame. Anomaly scores at each timestamp.
 #' @slot feature_matrix data.frame. Data after applying YAML mutations.
 #' @slot anomalies data.frame. Isolated extreme events triggering the analysis.
 #' @slot model ANY. The trained isotree model object.
@@ -34,6 +35,7 @@ setClass(
     hyperparameters = "list",
     domain_state = "character",
     raw_time_course = "data.frame",
+    scored_time_course = "data.frame",
     feature_matrix = "data.frame",
     anomalies = "data.frame",
     model = "ANY",
@@ -44,7 +46,8 @@ setClass(
     baseline_signatures = "matrix",
     active_k = "numeric",
     optimal_k = "integer",
-    forensic_ledger = "data.frame"
+    forensic_ledger = "data.frame",
+    cluster_radii = "numeric"
   ),
   
   # Set safe default values for initialization
@@ -52,7 +55,9 @@ setClass(
     domain_state = "uninitialized",
     active_k = NA_real_,
     distance_matrix = matrix(nrow = 0, ncol = 0),
-    baseline_signatures = matrix(nrow = 0, ncol = 0)
+    baseline_signatures = matrix(nrow = 0, ncol = 0),
+    scored_time_course = data.frame(),
+    cluster_radii = numeric(0)
   ),
   
   validity = function(object) {
@@ -138,10 +143,10 @@ setGeneric("extract_medoids", function(object, threshold = NULL, N = NULL, k = N
 #' @title Commit Forensic Ledger
 #' @description Locks in the k-value and ranks all anomalies by their topological distance to the medoid.
 #' @param object A DiagnosticEngine object.
-#' @param k Integer. The finalized number of distinct states.
+#' @param k Integer. Optional. The finalized number of distinct states. Defaults to optimal_k.
 #' @return An updated DiagnosticEngine object ready for historical export.
 #' @export
-setGeneric("commit_ledger", function(object, k) standardGeneric("commit_ledger"))
+setGeneric("commit_ledger", function(object, k = NULL) standardGeneric("commit_ledger"))
 
 #' @title Predict Streaming Data
 #' @description Routes new multivariate time course data into established historical medoids 
@@ -203,6 +208,22 @@ setGeneric("evaluate_k_stability", function(object, max_N, min_N, nb_steps = 50,
 setGeneric("get_threshold_at_N", function(object, n) {
   standardGeneric("get_threshold_at_N")
 })
+
+
+#' @title Ablate Features for Medoid Interpretation
+#' @description Performs Leave-One-Covariate-Out (LOCO) ablation on the extracted 
+#' medoids. By sequentially replacing each target variable with its global median, 
+#' it measures the corresponding drop in anomaly score to rank feature importance.
+#' @param object A DiagnosticEngine object (must have extracted medoids).
+#' @return A data.frame containing the ranked feature contributions for each archetype.
+#' @export
+setGeneric("ablate_features", function(object) standardGeneric("ablate_features"))
+
+#' @title Get Scored Time Course
+#' @description Returns the complete time course containing all anomaly scores, regardless of threshold.
+#' @param object A DiagnosticEngine object.
+#' @export
+setGeneric("get_scored_time_course", function(object) standardGeneric("get_scored_time_course"))
 
 
 # --- INITIALIZATION METHOD ---
@@ -281,6 +302,14 @@ setMethod("get_time_course", "DiagnosticEngine", function(object) {
     warning("Time course is empty. Ensure ingest_time_course() has been executed.")
   }
   return(object@raw_time_course)
+})
+
+#' @export
+setMethod("get_scored_time_course", "DiagnosticEngine", function(object) {
+  if (nrow(object@scored_time_course) == 0) {
+    warning("Scored time course is empty. Ensure extract_anomalies() has been executed.")
+  }
+  return(object@scored_time_course)
 })
 
 # --- CORE METHODS ---
@@ -374,6 +403,7 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   
   scored_data <- object@raw_time_course
   scored_data$anomaly_score <- scores
+  object@scored_time_course <- scored_data
   
   object@anomalies <- scored_data[scored_data$anomaly_score >= threshold, ]
   object@model <- iso_model
@@ -589,12 +619,77 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, threshold = NU
 })
 
 #' @export
-setMethod("commit_ledger", "DiagnosticEngine", function(object, k) {
+setMethod("ablate_features", "DiagnosticEngine", function(object) {
+  if (length(object@medoids) == 0) {
+    stop("Fatal Error: Medoids must be extracted before running feature ablation.")
+  }
+  
+  targets <- object@feature_schema$target_variables
+  
+  message("Computing global medians for LOCO ablation...")
+  baseline_medians <- apply(object@feature_matrix, 2, median, na.rm = TRUE)
+  
+  # Extract exactly the medoid peak (t=0) from the internal medoids list
+  peak_list <- lapply(object@medoids, function(df) {
+    df[df$timestamp == df$medoid_timestamp, , drop = FALSE][1, ] 
+  })
+  peak_data <- do.call(rbind, peak_list)
+  
+  message("Scoring baseline medoid peaks...")
+  base_scores <- stats::predict(object@model, peak_data[, targets, drop = FALSE])
+  
+  results_list <- list()
+  
+  message(sprintf("Ablating %d engineered targets...", length(targets)))
+  for (v in targets) {
+    ablated_data <- peak_data
+    ablated_data[[v]] <- baseline_medians[v]
+    
+    # Recalculate score with the variable neutered to the median
+    ablated_scores <- stats::predict(object@model, ablated_data[, targets, drop = FALSE])
+    
+    temp_df <- data.frame(
+      cluster = peak_data$cluster,
+      variable = v,
+      score_drop = base_scores - ablated_scores,
+      stringsAsFactors = FALSE
+    )
+    results_list[[v]] <- temp_df
+  }
+  
+  compiled_results <- do.call(rbind, results_list)
+  
+  # Sort and rank strictly using base R to minimize dependency overhead inside the class
+  compiled_results <- compiled_results[order(compiled_results$cluster, -compiled_results$score_drop), ]
+  compiled_results$rank <- ave(
+    compiled_results$score_drop, 
+    compiled_results$cluster, 
+    FUN = function(x) rank(-x, ties.method = "first")
+  )
+  
+  rownames(compiled_results) <- NULL
+  
+  message("Ablation complete. Features ranked by anomaly score drop.")
+  return(compiled_results)
+})
+
+#' @export
+setMethod("commit_ledger", "DiagnosticEngine", function(object, k = NULL) {
   if (!object@domain_state %in% c("calibrated", "medoids_extracted", "ledger_committed")) {
     stop("Fatal Error: Engine must be calibrated before committing the forensic ledger.")
   }
   
-  if (missing(k) || !is.numeric(k) || k %% 1 != 0) {
+  # Route to optimal_k if not explicitly provided
+  if (is.null(k) || missing(k)) {
+    if (.hasSlot(object, "optimal_k") && !is.na(object@optimal_k)) {
+      k <- object@optimal_k
+      message(sprintf("k not explicitly provided. Defaulting to calibrated optimal_k = %d", k))
+    } else {
+      stop("Fatal Error: k is not provided and optimal_k is unavailable. Please provide a valid integer for k.")
+    }
+  }
+  
+  if (!is.numeric(k) || k %% 1 != 0) {
     stop("Please provide a valid integer for k (e.g., k = 4).")
   }
   
@@ -643,10 +738,18 @@ setMethod("commit_ledger", "DiagnosticEngine", function(object, k) {
   cols <- c(routing_cols, setdiff(names(ledger_df), routing_cols))
   ledger_df <- ledger_df[, cols]
   
+  radii_calc <- ledger_df
+  radii_calc$anomaly_cluster <- gsub("_", " ", radii_calc$anomaly_cluster)
+  
+  radii_vec <- sapply(split(radii_calc$topological_distance, radii_calc$anomaly_cluster), max, na.rm = TRUE)
+  
   object@active_k <- k
+  object@cluster_radii <- radii_vec 
   object@forensic_ledger <- ledger_df
   object@domain_state <- "ledger_committed"
   
+  message("Ledger successfully committed and ranked. Call `get_ledger(engine)` to export.")
+  message("Empirical event horizons locked for predictive routing.")
   message("Ledger successfully committed and ranked. Call `get_ledger(engine)` to export.")
   
   return(object)
@@ -677,9 +780,8 @@ setMethod("explore_thresholds", "DiagnosticEngine", function(object, thresholds,
 
 #' @export
 setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
-  # Ensure the engine is fully calibrated and medoids are locked
-  if (nrow(object@baseline_signatures) == 0) {
-    stop("Fatal Error: Engine must have extracted medoids (@baseline_signatures) to route new data.")
+  if (nrow(object@baseline_signatures) == 0 || length(object@cluster_radii) == 0) {
+    stop("Fatal Error: Engine must have committed medoids and cluster radii to route new data.")
   }
   
   message(sprintf("Ingesting %d new streaming observations...", nrow(new_data)))
@@ -691,52 +793,57 @@ setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
                  paste(missing_cols, collapse = ", ")))
   }
   
-  # Step 1: Score the new data
+  # Step 1: Score the new data 
   feature_data <- new_data[, targets, drop = FALSE]
   scores <- stats::predict(object@model, feature_data)
   
-  # Initialize routing columns in the output dataframe
   results_df <- new_data
   results_df$anomaly_score <- scores
-  results_df$predicted_cluster <- NA_character_
-  results_df$distance_to_medoid <- NA_real_
   
-  # Step 2: Isolate new anomalies based on the frozen configuration threshold
-  threshold <- object@hyperparameters$anomaly_threshold
-  idx_anomalies <- which(scores >= threshold)
-  
-  if (length(idx_anomalies) == 0) {
-    message("No anomalies detected in the streaming batch. All systems normal.")
-    return(results_df)
-  }
-  
-  message(sprintf("%d new anomalies detected. Routing via topological signatures...", length(idx_anomalies)))
-  
-  # Step 3: Extract terminal node topologies for the new anomalies
-  anomaly_features <- feature_data[idx_anomalies, , drop = FALSE]
-  new_signatures <- stats::predict(object@model, anomaly_features, type = "tree_num")
+  # Step 2: Extract terminal node topologies for the ENTIRE stream
+  message("Extracting terminal nodes and computing topological distances...")
+  new_signatures <- stats::predict(object@model, feature_data, type = "tree_num")
   
   baseline_sigs <- object@baseline_signatures
   n_trees <- ncol(new_signatures)
+  k <- nrow(baseline_sigs)
   
-  predicted_clusters <- character(length(idx_anomalies))
-  distances <- numeric(length(idx_anomalies))
+  # Initialize distance matrix (N x k)
+  dist_mat <- matrix(NA, nrow = nrow(results_df), ncol = k)
+  colnames(dist_mat) <- rownames(baseline_sigs)
   
-  # Step 4: Calculate Hamming distance against frozen medoids and route
-  for (i in seq_along(idx_anomalies)) {
-    # Calculate the proportional leaf-node disagreement between this new event and all medoids
-    dist_vec <- apply(baseline_sigs, 1, function(baseline_row) {
-      sum(new_signatures[i, ] != baseline_row) / n_trees
-    })
-    
-    # Identify the closest topological medoid
-    best_match_idx <- which.min(dist_vec)
-    distances[i] <- dist_vec[best_match_idx]
-    predicted_clusters[i] <- rownames(baseline_sigs)[best_match_idx]
+  for (i in 1:k) {
+    # Vectorized Hamming distance: compare all N points to medoid i
+    disagreements <- colSums(t(new_signatures) != baseline_sigs[i, ])
+    dist_mat[, i] <- disagreements / n_trees
   }
   
-  results_df$predicted_cluster[idx_anomalies] <- predicted_clusters
-  results_df$distance_to_medoid[idx_anomalies] <- distances
+  # Step 3: Find closest medoid and its distance
+  closest_idx <- max.col(-dist_mat, ties.method = "first")
+  closest_clusters <- colnames(dist_mat)[closest_idx]
+  min_dists <- dist_mat[cbind(1:nrow(dist_mat), closest_idx)]
+  
+  results_df$closest_archetype <- closest_clusters
+  results_df$distance_to_archetype <- min_dists
+  
+  # Step 4: Route based on Empirical Event Horizons
+  message("Routing data using empirical topology radii...")
+  point_specific_radii <- object@cluster_radii[closest_clusters]
+  
+  results_df$predicted_state <- ifelse(
+    min_dists <= point_specific_radii,
+    closest_clusters,
+    "Background/Novel"
+  )
+  
+  # Optional: Flag Novel Anomalies 
+  # If a point is structurally outside any known fault radius, BUT has a severe isolation score
+  threshold <- object@hyperparameters$anomaly_threshold
+  results_df$predicted_state <- ifelse(
+    results_df$predicted_state == "Background/Novel" & results_df$anomaly_score >= threshold,
+    "Novel Anomaly",
+    results_df$predicted_state
+  )
   
   message("Routing complete. Return dataframe contains anomaly scores and predicted physical states.")
   

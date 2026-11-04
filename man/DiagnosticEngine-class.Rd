@@ -24,6 +24,8 @@ It applies divisive hierarchical clustering and global silhouette to extract mat
 
 \item{\code{raw_time_course}}{data.frame. The base ingested dataset.}
 
+\item{\code{scored_time_course}}{data.frame. Anomaly scores at each timestamp.}
+
 \item{\code{feature_matrix}}{data.frame. Data after applying YAML mutations.}
 
 \item{\code{anomalies}}{data.frame. Isolated extreme events triggering the analysis.}
