@@ -188,11 +188,20 @@ simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
     sampled_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
     block_features <- features[sampled_idx, , drop = FALSE]
     
-    # Calculate pairwise distances on the sampled block
+    # Train temporary model
     iso_model <- suppressWarnings(
       isotree::isolation.forest(block_features, ntrees = ntrees, sample_size = N, missing_action = "fail")
     )
-    d_mat <- as.matrix(stats::predict(iso_model, block_features, type = "dist"))
+    
+    # --- EXACT PARITY WITH compute_distances() ---
+    # 1. Extract terminal nodes
+    node_matrix <- stats::predict(iso_model, block_features, type = "tree_num")
+    
+    # 2. Compute proportional Hamming distance
+    n_trees_actual <- ncol(node_matrix)
+    raw_hamming <- e1071::hamming.distance(node_matrix)
+    d_mat <- as.matrix(raw_hamming / n_trees_actual)
+    # ---------------------------------------------
     
     # Compute LID profile using existing helper
     lid_res <- compute_lid_profile(d_mat, cluster_labels = rep(1, N), k = k)
@@ -239,13 +248,22 @@ simulate_dip_control <- function(object, N, iterations = 200) {
     sample_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
     sampled_features <- features[sample_idx, , drop = FALSE]
     
-    # Calculate pairwise Hamming distances via isotree
+    # Train temporary model
     temp_model <- suppressWarnings(
       isotree::isolation.forest(sampled_features, ntrees = object@hyperparameters$ntrees)
     )
-    dist_matrix <- stats::predict(temp_model, sampled_features, type = "dist")
     
-    # Compute Hartigan's D (assuming internal helper is available)
+    # --- EXACT PARITY WITH compute_distances() ---
+    # 1. Extract terminal nodes
+    node_matrix <- stats::predict(temp_model, sampled_features, type = "tree_num")
+    
+    # 2. Compute proportional Hamming distance
+    n_trees <- ncol(node_matrix)
+    raw_hamming <- e1071::hamming.distance(node_matrix)
+    dist_matrix <- as.matrix(raw_hamming / n_trees)
+    # ---------------------------------------------
+    
+    # Compute Hartigan's D 
     dip_results[i] <- compute_dip_statistic(dist_matrix)
   }
   
