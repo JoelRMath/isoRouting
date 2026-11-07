@@ -24,6 +24,7 @@
 #' @slot active_k numeric. The mathematically validated number of fault clusters.
 #' @slot optimal_k numeric. The optimal number k of cluster (global silouhette).
 #' @slot forensic_ledger data.frame. Ranked historical ledger mapping anomalies to their medoid.
+#' @slot cluster_radii numeric. Named vector of empirical cluster radii (maximum topological distance to each medoid).
 #'
 #' @import methods
 #' @export
@@ -225,6 +226,14 @@ setGeneric("ablate_features", function(object) standardGeneric("ablate_features"
 #' @export
 setGeneric("get_scored_time_course", function(object) standardGeneric("get_scored_time_course"))
 
+#' @title Route Full Ingested Time Course via Cluster Radii
+#' @description Routes all observations in the ingested time course (including sub-threshold 
+#' points) to their closest topological medoid if they fall within that cluster's empirical radius.
+#' @param object A DiagnosticEngine object with extracted medoids and cluster radii.
+#' @return A data.frame containing the scored time course along with `closest_archetype`, 
+#' `distance_to_archetype`, and `archetype_bucket`.
+#' @export
+setGeneric("route_time_course", function(object) standardGeneric("route_time_course"))
 
 # --- INITIALIZATION METHOD ---
 
@@ -441,14 +450,22 @@ setMethod("compute_distances", "DiagnosticEngine", function(object) {
   
   message("Computing topological Hamming distance proximity matrix...")
   
-  n_trees <- ncol(node_matrix)
-  raw_hamming <- e1071::hamming.distance(node_matrix)
-  hamming_dist_matrix <- raw_hamming / n_trees
+  t_nodes <- t(node_matrix)
+  n_trees <- nrow(t_nodes)
+  n_obs <- ncol(t_nodes)
   
-  object@distance_matrix <- as.matrix(hamming_dist_matrix)
+  hamming_dist_matrix <- vapply(
+    seq_len(n_obs),
+    function(i) colSums(t_nodes != t_nodes[, i]) / n_trees,
+    numeric(n_obs)
+  )
+  hamming_dist_matrix <- as.matrix(hamming_dist_matrix)
+  dimnames(hamming_dist_matrix) <- NULL
+  
+  object@distance_matrix <- hamming_dist_matrix
   
   message("Constructing DIANA hierarchical tree from forest topology...")
-  object@hierarchical_tree <- as.hclust(cluster::diana(stats::as.dist(hamming_dist_matrix)))
+  object@hierarchical_tree <- stats::as.hclust(cluster::diana(stats::as.dist(hamming_dist_matrix)))
   
   object@domain_state <- "distances_computed"
   message("Distance computation complete.")
@@ -565,6 +582,7 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, threshold = NU
   
   medoid_list <- list()
   medoid_indices <- integer(k)
+  radii_vec <- numeric(k)
   
   window_hours <- object@hyperparameters$temporal_window_hours
   
@@ -573,10 +591,12 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, threshold = NU
     
     if (length(idx_in_cluster) == 1) {
       medoid_idx <- idx_in_cluster
+      radii_vec[c_id] <- 0.0
     } else {
       sub_matrix <- object@distance_matrix[idx_in_cluster, idx_in_cluster]
       medoid_relative_idx <- which.min(rowSums(sub_matrix))
       medoid_idx <- idx_in_cluster[medoid_relative_idx]
+      radii_vec[c_id] <- max(sub_matrix[, medoid_relative_idx], na.rm = TRUE)
     }
     
     medoid_indices[c_id] <- medoid_idx
@@ -599,7 +619,11 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, threshold = NU
   
   object@medoids <- medoid_list
   
-  # Cache baseline terminal node signatures for predict_stream 
+  # Store empirical cluster radii named to match baseline_signatures
+  names(radii_vec) <- paste("Cluster", 1:k)
+  object@cluster_radii <- radii_vec
+  
+  # Cache baseline terminal node signatures for routing and predict_stream 
   targets <- object@feature_schema$target_variables
   
   medoid_feature_data <- data.frame()
@@ -613,7 +637,7 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, threshold = NU
   rownames(baseline_sigs) <- paste("Cluster", 1:k)
   object@baseline_signatures <- as.matrix(baseline_sigs)
   
-  message("Medoid extraction complete. Archetypes saved to @medoids.")
+  message("Medoid extraction complete. Archetypes and cluster radii saved.")
   
   return(object)
 })
@@ -837,7 +861,7 @@ setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
   )
   
   # Optional: Flag Novel Anomalies 
-  # If a point is structurally outside any known fault radius, BUT has a severe isolation score
+  # If a point is structurally outside any known fault radius, AND has a severe isolation score
   threshold <- object@hyperparameters$anomaly_threshold
   results_df$predicted_state <- ifelse(
     results_df$predicted_state == "Background/Novel" & results_df$anomaly_score >= threshold,
@@ -907,40 +931,58 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, mi
   t_max <- sorted_scores[actual_min_N]
   thresholds <- seq(t_min, t_max, length.out = nb_steps)
   
-  # --- 2. EXECUTE STABLE SWEEP ---
+  # --- 2. PRECOMPUTE MASTER HAMMING MATRIX IN CHRONOLOGICAL ORDER ---
+  message(sprintf("Precomputing master topological distance matrix at t_min = %.4f...", t_min))
+  master_idx <- which(scores >= t_min)
+  master_scores <- scores[master_idx]
+  
+  targets <- object@feature_schema$target_variables
+  master_anomaly_data <- object@raw_time_course[master_idx, targets, drop = FALSE]
+  
+  # Extract terminal nodes once for the largest substrate
+  master_nodes <- stats::predict(iso_model, master_anomaly_data, type = "tree_num")
+  t_nodes <- t(master_nodes)
+  n_trees_actual <- nrow(t_nodes)
+  n_master <- ncol(t_nodes)
+  
+  # Vectorized pairwise proportional Hamming distance (O(N) R calls instead of O(N^2))
+  master_dist <- vapply(
+    seq_len(n_master),
+    function(i) colSums(t_nodes != t_nodes[, i]) / n_trees_actual,
+    numeric(n_master)
+  )
+  dimnames(master_dist) <- NULL
+  
+  # --- 3. EXECUTE FAST SUBSETTED SWEEP ---
   results_list <- list()
   
-  message("Sweeping threshold interval...")
+  message("Sweeping threshold interval via matrix subsetting...")
   for (th in thresholds) {
-    idx <- which(scores >= th)
+    # Subsetting master_scores preserves exact chronological row order of which(scores >= th)
+    sub_idx <- which(master_scores >= th)
+    n_anom <- length(sub_idx)
     
     # Must have more anomalies than max_k to cluster successfully
-    if (length(idx) <= max_k) {
+    if (n_anom <= max_k) {
       results_list[[as.character(th)]] <- data.frame(
-        Threshold = th, N_Anomalies = length(idx), Opt_k = NA_real_, 
+        Threshold = th, N_Anomalies = n_anom, Opt_k = NA_real_, 
         Max_Silhouette = NA_real_, Hartigans_D = NA_real_,
         Global_LID = NA_real_, Min_Cluster_LID = NA_real_, Max_Cluster_LID = NA_real_
       )
       next
     }
     
-    # Create temporary engine state to utilize existing S4 methods
+    # Slice the precomputed master distance matrix
+    d_mat <- master_dist[sub_idx, sub_idx, drop = FALSE]
+    dimnames(d_mat) <- NULL
+    
+    # Populate temporary engine state directly without recomputing distances
     tmp_engine <- object
-    tmp_engine@anomalies <- base_data[idx, ]
+    tmp_engine@anomalies <- base_data[master_idx[sub_idx], , drop = FALSE]
     tmp_engine@model <- iso_model
-    tmp_engine@domain_state <- "anomalies_extracted"
-    
-    # Suppress console flood during iterative calibration
-    tmp_engine <- suppressMessages(compute_distances(tmp_engine))
-    
-    d_mat <- tmp_engine@distance_matrix
-    
-    # Retain square matrix coercion for the LID helper
-    if (inherits(d_mat, "dist")) {
-      d_mat_square <- as.matrix(d_mat)
-    } else {
-      d_mat_square <- d_mat 
-    }
+    tmp_engine@distance_matrix <- d_mat
+    tmp_engine@hierarchical_tree <- stats::as.hclust(cluster::diana(stats::as.dist(d_mat)))
+    tmp_engine@domain_state <- "distances_computed"
     
     # --- CALCULATE HARTIGAN'S DIP STATISTIC (D) ---
     dip_stat <- compute_dip_statistic(d_mat)
@@ -963,7 +1005,7 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, mi
     if (!is.na(opt_k)) {
       lbls <- stats::cutree(tmp_engine@hierarchical_tree, k = opt_k)
       
-      lid_res <- compute_lid_profile(d_mat_square, cluster_labels = lbls, k = 5)
+      lid_res <- compute_lid_profile(d_mat, cluster_labels = lbls, k = 5)
       
       global_lid <- lid_res$Global_LID
       min_lid <- lid_res$Min_Cluster_LID
@@ -975,7 +1017,7 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, mi
     }
     
     results_list[[as.character(th)]] <- data.frame(
-      Threshold = th, N_Anomalies = length(idx), Opt_k = opt_k, 
+      Threshold = th, N_Anomalies = n_anom, Opt_k = opt_k, 
       Max_Silhouette = max_sil, Hartigans_D = dip_stat,
       Global_LID = global_lid, Min_Cluster_LID = min_lid, Max_Cluster_LID = max_lid
     )
@@ -1036,4 +1078,49 @@ setMethod("get_threshold_at_N", signature("DiagnosticEngine"), function(object, 
   sorted_scores <- sort(scores, decreasing = TRUE)
   
   return(sorted_scores[n])
+})
+
+#' @rdname route_time_course
+#' @export
+setMethod("route_time_course", "DiagnosticEngine", function(object) {
+  if (nrow(object@baseline_signatures) == 0 || length(object@cluster_radii) == 0) {
+    stop("Fatal Error: Engine must have extracted medoids (@baseline_signatures) and @cluster_radii before routing.")
+  }
+  
+  full_data <- get_scored_time_course(object)
+  features <- object@feature_matrix
+  medoid_sigs <- object@baseline_signatures
+  
+  k <- nrow(medoid_sigs)
+  n_trees <- ncol(medoid_sigs)
+  
+  message("Extracting terminal nodes and computing topological distances for full time course...")
+  full_sigs <- stats::predict(object@model, features, type = "tree_num")
+  
+  dist_mat <- matrix(NA_real_, nrow = nrow(full_data), ncol = k)
+  colnames(dist_mat) <- rownames(medoid_sigs)
+  
+  for (i in 1:k) {
+    disagreements <- colSums(t(full_sigs) != medoid_sigs[i, ])
+    dist_mat[, i] <- disagreements / n_trees
+  }
+  
+  # Find closest medoid and its distance
+  closest_idx <- max.col(-dist_mat, ties.method = "first")
+  closest_clusters <- colnames(dist_mat)[closest_idx]
+  min_dists <- dist_mat[cbind(seq_len(nrow(dist_mat)), closest_idx)]
+  
+  full_data$closest_archetype <- closest_clusters
+  full_data$distance_to_archetype <- min_dists
+  
+  # Apply the specific empirical radius for each point's closest cluster
+  point_specific_radii <- object@cluster_radii[closest_clusters]
+  
+  full_data$archetype_bucket <- ifelse(
+    min_dists <= point_specific_radii,
+    closest_clusters,
+    "Background"
+  )
+  
+  return(full_data)
 })

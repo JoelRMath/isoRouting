@@ -197,10 +197,18 @@ simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
     # 1. Extract terminal nodes
     node_matrix <- stats::predict(iso_model, block_features, type = "tree_num")
     
-    # 2. Compute proportional Hamming distance
-    n_trees_actual <- ncol(node_matrix)
-    raw_hamming <- e1071::hamming.distance(node_matrix)
-    d_mat <- as.matrix(raw_hamming / n_trees_actual)
+    # 2. Compute vectorized proportional Hamming distance
+    t_nodes <- t(node_matrix)
+    n_trees_actual <- nrow(t_nodes)
+    n_obs <- ncol(t_nodes)
+    
+    d_mat <- vapply(
+      seq_len(n_obs),
+      function(j) colSums(t_nodes != t_nodes[, j]) / n_trees_actual,
+      numeric(n_obs)
+    )
+    d_mat <- as.matrix(d_mat)
+    dimnames(d_mat) <- NULL
     # ---------------------------------------------
     
     # Compute LID profile using existing helper
@@ -257,10 +265,18 @@ simulate_dip_control <- function(object, N, iterations = 200) {
     # 1. Extract terminal nodes
     node_matrix <- stats::predict(temp_model, sampled_features, type = "tree_num")
     
-    # 2. Compute proportional Hamming distance
-    n_trees <- ncol(node_matrix)
-    raw_hamming <- e1071::hamming.distance(node_matrix)
-    dist_matrix <- as.matrix(raw_hamming / n_trees)
+    # 2. Compute vectorized proportional Hamming distance
+    t_nodes <- t(node_matrix)
+    n_trees <- nrow(t_nodes)
+    n_obs <- ncol(t_nodes)
+    
+    dist_matrix <- vapply(
+      seq_len(n_obs),
+      function(j) colSums(t_nodes != t_nodes[, j]) / n_trees,
+      numeric(n_obs)
+    )
+    dist_matrix <- as.matrix(dist_matrix)
+    dimnames(dist_matrix) <- NULL
     # ---------------------------------------------
     
     # Compute Hartigan's D 

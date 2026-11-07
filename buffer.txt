@@ -1,0 +1,157 @@
+#' @export
+setMethod("compute_distances", "DiagnosticEngine", function(object) {
+  if (!object@domain_state %in% c("anomalies_extracted", "calibrated")) {
+    stop("Fatal Error: Anomalies must be extracted before computing distances.")
+  }
+  
+  if (is.null(object@model)) {
+    stop("Fatal Error: Isolation Forest model not found in the DiagnosticEngine object.")
+  }
+  
+  targets <- object@feature_schema$target_variables
+  n_events <- nrow(object@anomalies)
+  
+  message(sprintf("Extracting terminal node topology for %d isolated events...", n_events))
+  
+  # Updated to reflect the new domain-agnostic time course slot
+  anomaly_data <- object@raw_time_course[
+    object@raw_time_course$timestamp %in% object@anomalies$timestamp, 
+    targets, 
+    drop = FALSE
+  ]
+  
+  node_matrix <- stats::predict(object@model, anomaly_data, type = "tree_num")
+  
+  message("Computing topological Hamming distance proximity matrix...")
+  
+  n_trees <- ncol(node_matrix)
+  raw_hamming <- e1071::hamming.distance(node_matrix)
+  hamming_dist_matrix <- raw_hamming / n_trees
+  
+  object@distance_matrix <- as.matrix(hamming_dist_matrix)
+  
+  message("Constructing DIANA hierarchical tree from forest topology...")
+  object@hierarchical_tree <- as.hclust(cluster::diana(stats::as.dist(hamming_dist_matrix)))
+  
+  object@domain_state <- "distances_computed"
+  message("Distance computation complete.")
+  
+  return(object)
+})
+
+#' Simulate Control Quantiles for Hartigan's Dip Statistic
+#'
+#' Estimates the baseline distance heterogeneity (Hartigan's D) by uniformly 
+#' sampling N observations from the complete time course. This preserves natural 
+#' multivariate dependencies and physical constraints, providing a conservative 
+#' control baseline against which anomaly clustering can be evaluated.
+#'
+#' @param object A \code{DiagnosticEngine} object.
+#' @param N Integer. The subset size to sample.
+#' @param iterations Integer. Number of Monte Carlo iterations (default is 200).
+#'
+#' @return A \code{data.frame} containing the sample size (\code{N}), 
+#' \code{Median}, \code{Q05}, and \code{Q95} bounds of the simulated Dip statistics.
+#' @export
+simulate_dip_control <- function(object, N, iterations = 200) {
+  features <- object@feature_matrix
+  total_rows <- nrow(features)
+  
+  if (N > total_rows) stop("N cannot exceed total ingested observations.")
+  
+  dip_results <- numeric(iterations)
+  
+  for (i in seq_len(iterations)) {
+    # Conservative baseline: sample directly from the real, bounded topology
+    sample_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
+    sampled_features <- features[sample_idx, , drop = FALSE]
+    
+    # Train temporary model
+    temp_model <- suppressWarnings(
+      isotree::isolation.forest(sampled_features, ntrees = object@hyperparameters$ntrees)
+    )
+    
+    # --- EXACT PARITY WITH compute_distances() ---
+    # 1. Extract terminal nodes
+    node_matrix <- stats::predict(temp_model, sampled_features, type = "tree_num")
+    
+    # 2. Compute proportional Hamming distance
+    n_trees <- ncol(node_matrix)
+    raw_hamming <- e1071::hamming.distance(node_matrix)
+    dist_matrix <- as.matrix(raw_hamming / n_trees)
+    # ---------------------------------------------
+    
+    # Compute Hartigan's D 
+    dip_results[i] <- compute_dip_statistic(dist_matrix)
+  }
+  
+  data.frame(
+    N = N,
+    Median = median(dip_results, na.rm = TRUE),
+    Q05 = quantile(dip_results, 0.05, na.rm = TRUE),
+    Q95 = quantile(dip_results, 0.95, na.rm = TRUE)
+  )
+}
+
+#' @title Simulate Control Quantiles for Local Intrinsic Dimensionality (LID)
+#' @description Generates an expected baseline distribution for LID 
+#' by uniformly sampling N observations from the complete time course. 
+#' This preserves natural multivariate dependencies and physical constraints, 
+#' providing a conservative control baseline against which anomaly breakdown 
+#' (variable coupling) can be evaluated.
+#' @param engine A populated `DiagnosticEngine` object.
+#' @param N Integer. The subset size to sample.
+#' @param iterations Integer. Number of Monte Carlo iterations. Default is 200.
+#' @param k Integer. The number of nearest neighbors for LID estimation. Default is 5.
+#' @return A data.frame containing N, Median, and quantiles (5%, 25%, 50%, 75%, 95%).
+#' @export
+simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
+  features <- engine@feature_matrix
+  total_rows <- nrow(features)
+  
+  if (N > total_rows) {
+    stop("N cannot exceed total ingested observations.")
+  }
+  
+  hyps <- engine@hyperparameters
+  ntrees <- hyps$ntrees
+  
+  lids <- numeric(iterations)
+  
+  for (i in seq_len(iterations)) {
+    # Conservative baseline: sample directly from the entire dataset
+    sampled_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
+    block_features <- features[sampled_idx, , drop = FALSE]
+    
+    # Train temporary model
+    iso_model <- suppressWarnings(
+      isotree::isolation.forest(block_features, ntrees = ntrees, sample_size = N, missing_action = "fail")
+    )
+    
+    # --- EXACT PARITY WITH compute_distances() ---
+    # 1. Extract terminal nodes
+    node_matrix <- stats::predict(iso_model, block_features, type = "tree_num")
+    
+    # 2. Compute proportional Hamming distance
+    n_trees_actual <- ncol(node_matrix)
+    raw_hamming <- e1071::hamming.distance(node_matrix)
+    d_mat <- as.matrix(raw_hamming / n_trees_actual)
+    # ---------------------------------------------
+    
+    # Compute LID profile using existing helper
+    lid_res <- compute_lid_profile(d_mat, cluster_labels = rep(1, N), k = k)
+    lids[i] <- lid_res$Global_LID
+  }
+  
+  quant <- stats::quantile(lids, probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE)
+  
+  return(data.frame(
+    N = N,
+    Median = median(lids, na.rm = TRUE),
+    Q05 = quant[1],
+    Q25 = quant[2],
+    Q50 = quant[3],
+    Q75 = quant[4],
+    Q95 = quant[5]
+  ))
+}

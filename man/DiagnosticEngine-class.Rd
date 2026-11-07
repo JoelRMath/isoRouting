@@ -47,5 +47,7 @@ It applies divisive hierarchical clustering and global silhouette to extract mat
 \item{\code{optimal_k}}{numeric. The optimal number k of cluster (global silouhette).}
 
 \item{\code{forensic_ledger}}{data.frame. Ranked historical ledger mapping anomalies to their medoid.}
+
+\item{\code{cluster_radii}}{numeric. Named vector of empirical cluster radii (maximum topological distance to each medoid).}
 }}
 
