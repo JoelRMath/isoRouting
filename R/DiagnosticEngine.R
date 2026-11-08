@@ -235,6 +235,24 @@ setGeneric("get_scored_time_course", function(object) standardGeneric("get_score
 #' @export
 setGeneric("route_time_course", function(object) standardGeneric("route_time_course"))
 
+#' @title Isolate and Cluster Novel Streaming Anomalies
+#' @description Branches a calibrated baseline DiagnosticEngine onto the 'Novel Anomaly' 
+#' subset identified by `predict_stream()`. Automatically computes topological Hamming 
+#' distances using the frozen baseline forest, calibrates the optimal number of novel 
+#' sub-clusters via DIANA and Global Silhouette, extracts +/- window medoids, and commits 
+#' a forensic ledger of the novel archetypes.
+#' @param object A baseline `DiagnosticEngine` object.
+#' @param routed_data A `data.frame` returned by `predict_stream()`.
+#' @param min_k Integer. Minimum number of novel sub-clusters to test. Default is 2.
+#' @param max_k Integer. Maximum number of novel sub-clusters to test. Default is 6.
+#' @param k Integer. Optional override for the number of novel sub-clusters. Defaults to optimal_k.
+#' @return A populated `DiagnosticEngine` object representing the novel anomaly sub-clusters.
+#' @rdname isolate_novel_anomalies
+#' @export
+setGeneric("isolate_novel_anomalies", function(object, routed_data, min_k = 2, max_k = 6, k = NULL) {
+  standardGeneric("isolate_novel_anomalies")
+})
+
 # --- INITIALIZATION METHOD ---
 
 #' @export
@@ -522,24 +540,6 @@ setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8
 })
 
 
-#' Extract Topological Medoids for DiagnosticEngine
-#'
-#' Extracts archetypal time-course medoids from the anomaly topology. If a 
-#' \code{threshold} or \code{N} is provided, the method automatically extracts 
-#' the corresponding statistical substrate, computes distance matrices, and 
-#' calibrates the optimal number of clusters.
-#'
-#' @param object A \code{DiagnosticEngine} object.
-#' @param threshold Numeric. Optional. The anomaly score threshold used to define the subset of extreme events.
-#' @param N Integer. Optional. The target number of top anomalies to isolate (mapped to a threshold internally).
-#' @param k Integer. Optional. Overrides the calibrated optimal $k$ to force a specific number of clusters.
-#'
-#' @return A \code{DiagnosticEngine} object with populated \code{@medoids} and \code{@baseline_signatures} slots.
-#' @rdname extract_medoids
-#' @export
-setGeneric("extract_medoids", function(object, threshold = NULL, N = NULL, k = NULL) {
-  standardGeneric("extract_medoids")
-})
 
 #' @rdname extract_medoids
 #' @export
@@ -857,14 +857,14 @@ setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
   results_df$predicted_state <- ifelse(
     min_dists <= point_specific_radii,
     closest_clusters,
-    "Background/Novel"
+    "Background"
   )
   
   # Optional: Flag Novel Anomalies 
   # If a point is structurally outside any known fault radius, AND has a severe isolation score
   threshold <- object@hyperparameters$anomaly_threshold
   results_df$predicted_state <- ifelse(
-    results_df$predicted_state == "Background/Novel" & results_df$anomaly_score >= threshold,
+    results_df$predicted_state == "Background" & results_df$anomaly_score >= threshold,
     "Novel Anomaly",
     results_df$predicted_state
   )
@@ -874,23 +874,6 @@ setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
   return(results_df)
 })
 
-#' @title Evaluate k-Cluster Stability Across Anomaly Thresholds
-#' @description Sweeps across a dynamically determined range of anomaly thresholds (based on 
-#' bounding sample sizes `max_N` and `min_N`) to compute topological and clustering stability metrics. 
-#' Extracts the optimal k, maximum global silhouette, Hartigan's Dip statistic, and 
-#' Local Intrinsic Dimensionality (LID) profiles for each threshold step.
-#' @param object A populated `DiagnosticEngine` object (must have ingested a time course).
-#' @param max_N Integer. The maximum number of anomalies to evaluate (sets the lower threshold bound).
-#' @param min_N Integer. The minimum number of anomalies to evaluate (sets the upper threshold bound).
-#' @param nb_steps Integer. The number of evenly spaced threshold steps to evaluate. Default is 50.
-#' @param min_k Integer. The minimum number of clusters to test during calibration. Default is 2.
-#' @param max_k Integer. The maximum number of clusters to test during calibration. Default is 10.
-#' @return A data frame containing the sweep results: Threshold, N_Anomalies, Opt_k, Max_Silhouette, 
-#' Hartigans_D, Global_LID, Min_Cluster_LID, and Max_Cluster_LID.
-#' @export
-setGeneric("evaluate_k_stability", function(object, max_N, min_N, nb_steps = 50, min_k = 2, max_k = 10) {
-  standardGeneric("evaluate_k_stability")
-})
 
 #' @rdname evaluate_k_stability
 #' @export
@@ -1028,22 +1011,6 @@ setMethod("evaluate_k_stability", "DiagnosticEngine", function(object, max_N, mi
   return(res_df)
 })
 
-#' Retrieve Anomaly Score Threshold for a Target Sample Size
-#'
-#' Identifies the exact anomaly score threshold required to isolate the top \code{n} 
-#' most anomalous observations. If anomaly scores have not yet been computed in the 
-#' \code{DiagnosticEngine}, a temporary model is trained using the initialized hyperparameters.
-#'
-#' @param object A \code{DiagnosticEngine} object.
-#' @param n Integer. The target number of top anomalies to isolate.
-#'
-#' @return Numeric. The anomaly score threshold corresponding to the target sample size. 
-#' Note: Due to potential ties in Isolation Forest scores, filtering a dataset with 
-#' \code{score >= threshold} will return \strong{at least} \code{n} elements.
-#' @export
-setGeneric("get_threshold_at_N", function(object, n) {
-  standardGeneric("get_threshold_at_N")
-})
 
 #' @rdname get_threshold_at_N
 #' @export
@@ -1123,4 +1090,44 @@ setMethod("route_time_course", "DiagnosticEngine", function(object) {
   )
   
   return(full_data)
+})
+
+#' @rdname isolate_novel_anomalies
+#' @export
+setMethod("isolate_novel_anomalies", "DiagnosticEngine", function(object, routed_data, min_k = 2, max_k = 6, k = NULL) {
+  if (is.null(object@model)) {
+    stop("Fatal Error: Baseline engine must contain a trained Isolation Forest model.")
+  }
+  if (!all(c("predicted_state", "anomaly_score", "timestamp") %in% colnames(routed_data))) {
+    stop("Fatal Error: 'routed_data' must be a data.frame returned by predict_stream().")
+  }
+  
+  novel_rows <- routed_data[routed_data$predicted_state == "Novel Anomaly", , drop = FALSE]
+  if (nrow(novel_rows) < 2) {
+    stop("Fatal Error: At least 2 'Novel Anomaly' observations are required for sub-clustering.")
+  }
+  
+  schema_cols <- unique(c(
+    "timestamp",
+    object@feature_schema$target_variables,
+    object@feature_schema$context_variables
+  ))
+  keep_cols <- intersect(schema_cols, colnames(routed_data))
+  
+  # Branch a new DiagnosticEngine preserving the baseline @model and @feature_matrix
+  # (ensuring ablate_features() uses the true baseline medians), while setting the stream as @raw_time_course
+  novel_engine <- object
+  novel_engine@raw_time_course <- routed_data[, keep_cols, drop = FALSE]
+  novel_engine@scored_time_course <- routed_data[, c(keep_cols, "anomaly_score"), drop = FALSE]
+  novel_engine@anomalies <- novel_rows[, c(keep_cols, "anomaly_score"), drop = FALSE]
+  novel_engine@domain_state <- "anomalies_extracted"
+  
+  # Execute the standard S4 pipeline on the isolated novel anomalies
+  novel_engine <- compute_distances(novel_engine)
+  actual_max_k <- min(max_k, nrow(novel_rows) - 1)
+  novel_engine <- calibrate(novel_engine, min_k = min_k, max_k = actual_max_k)
+  novel_engine <- extract_medoids(novel_engine, k = k)
+  novel_engine <- commit_ledger(novel_engine, k = k)
+  
+  return(novel_engine)
 })

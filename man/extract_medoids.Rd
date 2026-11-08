@@ -7,25 +7,17 @@
 \usage{
 extract_medoids(object, threshold = NULL, N = NULL, k = NULL)
 
-extract_medoids(object, threshold = NULL, N = NULL, k = NULL)
-
 \S4method{extract_medoids}{DiagnosticEngine}(object, threshold = NULL, N = NULL, k = NULL)
 }
 \arguments{
 \item{object}{A \code{DiagnosticEngine} object.}
 
-\item{threshold}{Numeric. Optional. The anomaly score threshold used to define the subset of extreme events.}
+\item{threshold}{Numeric. Optional. The anomaly score threshold to define the statistical substrate.}
 
-\item{N}{Integer. Optional. The target number of top anomalies to isolate (mapped to a threshold internally).}
+\item{N}{Integer. Optional. The target number of anomalies to isolate.}
 
-\item{k}{Integer. Optional. Overrides the calibrated optimal $k$ to force a specific number of clusters.}
-}
-\value{
-A \code{DiagnosticEngine} object with populated \code{@medoids} and \code{@baseline_signatures} slots.
+\item{k}{Integer. The number of archetypal clusters to extract.}
 }
 \description{
-Extracts archetypal time-course medoids from the anomaly topology. If a
-\code{threshold} or \code{N} is provided, the method automatically extracts
-the corresponding statistical substrate, computes distance matrices, and
-calibrates the optimal number of clusters.
+Extract Topological Medoids
 }

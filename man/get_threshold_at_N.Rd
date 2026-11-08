@@ -7,8 +7,6 @@
 \usage{
 get_threshold_at_N(object, n)
 
-get_threshold_at_N(object, n)
-
 \S4method{get_threshold_at_N}{DiagnosticEngine}(object, n)
 }
 \arguments{
@@ -18,16 +16,8 @@ get_threshold_at_N(object, n)
 }
 \value{
 Numeric. The anomaly score threshold corresponding to the target sample size.
-
-Numeric. The anomaly score threshold corresponding to the target sample size.
-Note: Due to potential ties in Isolation Forest scores, filtering a dataset with
-\code{score >= threshold} will return \strong{at least} \code{n} elements.
 }
 \description{
-Identifies the exact anomaly score threshold required to isolate the top \code{n}
-most anomalous observations. If anomaly scores have not yet been computed in the
-\code{DiagnosticEngine}, a temporary model is trained using the initialized hyperparameters.
-
 Identifies the exact anomaly score threshold required to isolate the top \code{n}
 most anomalous observations. If anomaly scores have not yet been computed in the
 \code{DiagnosticEngine}, a temporary model is trained using the initialized hyperparameters.

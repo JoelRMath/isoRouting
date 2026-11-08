@@ -14,15 +14,6 @@ evaluate_k_stability(
   max_k = 10
 )
 
-evaluate_k_stability(
-  object,
-  max_N,
-  min_N,
-  nb_steps = 50,
-  min_k = 2,
-  max_k = 10
-)
-
 \S4method{evaluate_k_stability}{DiagnosticEngine}(
   object,
   max_N,
@@ -33,33 +24,25 @@ evaluate_k_stability(
 )
 }
 \arguments{
-\item{object}{A populated \code{DiagnosticEngine} object (must have ingested a time course).}
+\item{object}{A \code{DiagnosticEngine} object.}
 
-\item{max_N}{Integer. The maximum number of anomalies to evaluate (sets the lower threshold bound).}
+\item{max_N}{Integer. The maximum number of anomalies to evaluate (defines the lower threshold bound).}
 
-\item{min_N}{Integer. The minimum number of anomalies to evaluate (sets the upper threshold bound).}
+\item{min_N}{Integer. The minimum number of anomalies to evaluate (defines the upper threshold bound).}
 
-\item{nb_steps}{Integer. The number of evenly spaced threshold steps to evaluate. Default is 50.}
+\item{nb_steps}{Integer. The number of discrete threshold steps to evaluate between the bounds. Default is 50.}
 
-\item{min_k}{Integer. The minimum number of clusters to test during calibration. Default is 2.}
+\item{min_k}{Integer. The minimum number of clusters to evaluate during DIANA partitioning. Default is 2.}
 
-\item{max_k}{Integer. The maximum number of clusters to test during calibration. Default is 10.}
+\item{max_k}{Integer. The maximum number of clusters to evaluate during DIANA partitioning. Default is 10.}
 }
 \value{
 A \code{data.frame} containing the stability profile with columns: \code{Threshold},
 \code{N_Anomalies}, \code{Opt_k}, \code{Max_Silhouette}, and \code{Hartigans_D}.
-
-A data frame containing the sweep results: Threshold, N_Anomalies, Opt_k, Max_Silhouette,
-Hartigans_D, Global_LID, Min_Cluster_LID, and Max_Cluster_LID.
 }
 \description{
 Sweeps a range of anomaly thresholds defined by sample size bounds (\code{max_N} and \code{min_N})
 to evaluate the structural stability of the clustering manifold. To optimize performance,
 a master distance matrix is computed once at \code{max_N} and instantaneously subsetted
 for higher thresholds.
-
-Sweeps across a dynamically determined range of anomaly thresholds (based on
-bounding sample sizes \code{max_N} and \code{min_N}) to compute topological and clustering stability metrics.
-Extracts the optimal k, maximum global silhouette, Hartigan's Dip statistic, and
-Local Intrinsic Dimensionality (LID) profiles for each threshold step.
 }
