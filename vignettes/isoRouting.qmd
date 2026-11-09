@@ -668,25 +668,25 @@ While these two methods map event counts to score cutoffs, they do not indicate 
 #| eval: true
 #| echo: true
 #| code-fold: show
-#| code-summary: "Show evaluate_k_stability Call"
+#| code-summary: "evaluate_k_stability Call Code"
 #| message: false
 #| warning: false
 
-# Sweep based on statistical substrate size (N)
+# Sweep across anomaly counts from N = 800 down to N = 20
 stability_curve_naive <- evaluate_k_stability(engine, max_N = 800, min_N = 20, nb_steps = 61, max_k = 10)
 ```
 
-Method `evaluate_k_stability()` maps the anomaly threshold against three independent diagnostics. Note that the engine does not utilize Euclidean or isolation-forest (`isotree`, sample-size dependent) distances between anomalies. Instead, `isoRouting` uses a **proportional Hamming distance**: the fraction of trees in the forest where two observations land in *different* terminal leaves. This metric measures structural disagreement and is independent of the number of anomalies. 
+Method `evaluate_k_stability()` maps the anomaly score threshold ($T$) against three diagnostic metrics. Rather than using Euclidean distances, `isoRouting` computes a proportional Hamming distance: the fraction of trees in the forest where two observations land in different terminal leaves. Because this metric simply counts leaf disagreements, its scale ($0$ to $1$) does not depend on the number of extracted anomalies.
 
-- **Optimal Clusters ($k$)**: At each value of threshold $\theta$, divisive clustering [@kaufman1990finding] is utilized to group anomalies. The optimal number $k$ of clusters (best tree cut) is then defined as the one maximizing the global silhouette score [@rousseeuw1987silhouettes]. Visualization of $k$ as a function of $\theta$ helps identify $\theta$ intervals where clustering is stable.
-- **Hartigan's Dip Statistic ($D$)**: The statistic (effect size) of a non-parametric test applied to the Hamming distance matrix. A peak in $D$ rejects the hypothesis of unimodality, indicating maximum distance heterogeneity (i.e., the likely presence of highly distinct clusters) [@hartigan1985dip].
-- **Local Intrinsic Dimensionality (LID)**: Measures how many variables remain independent. A decrease in LID suggests a system "breakdown," where variables become more coupled due to a physical fault (e.g. a sensor break will decrease variance of a variable).
+- **Optimal Clusters ($k$)**: At each value of threshold $T$, divisive clustering [@kaufman1990finding] groups the anomalies. The optimal cluster count $k$ (best tree cut) is selected by maximizing the global silhouette score [@rousseeuw1987silhouettes]. Plotting $k$ against $T$ highlights threshold intervals (plateaus) where the cluster partition remains stable.
+- **Hartigan's Dip Statistic ($D$)**: Measures the multimodality of all pairwise Hamming distances [@hartigan1985dip]. High values of $D$ indicate strong distance heterogeneity—suggesting distances within clusters are likely smaller than distances between clusters.
+- **Local Intrinsic Dimensionality (LID)**: Estimates the number of independent variables governing the isolated points. A drop in LID suggests a system "breakdown," where variables become more coupled due to a physical fault (e.g. a failed sensor freezing at a constant value reduces the effective degrees of freedom).
 
-<b id="stability-ggplot-target" class="flash-target">Diagnostics Plotting Wrapper</b>
+<span id="stability-ggplot-target" class="flash-target" style="color: #0072B2;">Diagnostics Plotting Wrapper</span>
 ```{r}
 #| label: stability-ggplot-function
 #| echo: true
-#| code-summary: "Show ggplot Function"
+#| code-summary: "Ggplot Function Code"
 #| message: false
 #| warning: false
 
@@ -764,8 +764,8 @@ plot_topological_stability <- function(stability_df, plot_title, plot_subtitle) 
 #| label: fig-naive-evaluate-stability
 #| eval: true
 #| echo: true
-#| code-summary: "Show Plot Call"
-#| fig-cap: "Topological stability across anomaly thresholds using raw telemetry features. The volatility across all metrics indicates a lack of stable anomaly archetypes."
+#| code-summary: "Plot Call Code"
+#| fig-cap: "Diagnostic profiles across anomaly thresholds using raw telemetry features. Red-bordered gold circles mark the maximum Hartigan's D and minimum LID."
 #| fig-height: 12
 #| fig-width: 9
 #| warning: false
@@ -775,21 +775,21 @@ plot_topological_stability <- function(stability_df, plot_title, plot_subtitle) 
 fig_naive <- plot_topological_stability(
   stability_curve_naive,
   plot_title = "Anomaly Threshold Diagnostics: Naive Configuration",
-  plot_subtitle = "Mapping cluster plateaus (k), distance heterogeneity (D), and variable dependencies breaks (LID) to guide threshold exploration."
+  plot_subtitle = "Mapping cluster plateaus (k), distance heterogeneity (D), and variable coupling (LID) across thresholds."
 )
 
 print(fig_naive)
 ```
 
-@fig-naive-evaluate-stability shows candidate plateaus at $k = 4$, $k=3$ and $k=2$. We choose to ignore the plateau at $k=4$ because, while it spans the largest threshold interval, it still represents at least 200 points and its metrics $D$ and LID are not remarkable. The plateau at $k=2$ starts with the maximum $D$ value, indicating at least two very different types of distances in the Hamming matrix. The last small plateau at $k=3$ is also interesting because it indicates severe breakdown due to its small LID value.
+In @fig-naive-evaluate-stability, the optimal cluster count $k$ fluctuates heavily at lower thresholds before settling into a broad plateau at $k = 4$ ($T \in [0.644, 0.662]$) and a final small plateau at $k = 2$ ($T \ge 0.664$). Across the $k = 4$ plateau, Hartigan's $D$ begins to climb while LID drops steadily. Both metrics reach their extremes in the $k = 2$ region: LID hits its minimum ($\approx 3.15$) at $T \approx 0.664$, and $D$ reaches its maximum ($\approx 0.128$) at $T \approx 0.667$.  
 
-Comparing values of diagnostic metrics $D$ and LID is in itself useful. One can also ask the following question: are those values "significantly" large or small? Answering such questions requires building null models of these two metrics. We start with metric $D$ by utilizing the helper function `simulate_dip_control`.
+To verify whether these $D$ and LID values differ significantly from normal operating variations, we compare them against Monte Carlo control distributions generated by `isoRouting` helper functions `simulate_dip_control()` and `simulate_lid_control()`. 
 
 ```{r}
 #| label: naive-anomaly-thresholds
-#| eval: false
+#| eval: true
 #| code-fold: show
-#| code-summary: "Show Null Dip Computation"
+#| code-summary: "Control Dip Code"
 #| message: false
 #| warning: false
 
@@ -808,7 +808,7 @@ dip_control_naive <- map_dfr(n_sequence, function(n) {
 ```{r}
 #| label: ggplot-null-dip
 #| echo: true
-#| code-summary: "Show ggplot function"
+#| code-summary: "Ggplot Function Code"
 
 library(ggplot2)
 
@@ -835,14 +835,14 @@ plot_baseline_profile <- function(results_df, line_color, plot_title, plot_subti
 
 ```{r}
 #| label: fig-naive-control-dip
-#| eval: false
+#| eval: true
 #| echo: true
-#| code-summary: "Show Plot Call"
+#| code-summary: "Plot Call Code"
 #| message: false
 #| warning: false
 #| fig-width: 8
 #| fig-height: 5
-#| fig-cap: "Simulated Control Bounds of Hartigan's Dip Statistic. The observed peak in the actual stability profile far exceeds the 95% threshold, rejecting the possibility of the observed peak being an artifact of the Hamming distance matrix. Irregular sampling of the threshold is explained by mapping the grid directly to the number of anomalies (N)."
+#| fig-cap: "Simulated control bounds for Hartigan's Dip Statistic (D). The irregular spacing on the x-axis reflects evaluating the threshold at discrete anomaly counts (N = 20 to 100)."
 
 # Generate the Naive Dip Plot
 fig_dip_null_naive <- plot_baseline_profile(
@@ -856,26 +856,24 @@ fig_dip_null_naive <- plot_baseline_profile(
 print(fig_dip_null_naive)
 ```
 
-@fig-naive-control-dip displays quantiles of a control distribution for $D$ obtained with the following simulation scheme at each value of $N$: we uniformly sample $N$ observations directly from the entire ingested time course, construct the a Hamming distance matrix for that subset, and compute Hartigan's $D$.
+For each sample size $N \in [20, 100]$, `simulate_dip_control()` uniformly samples $N$ observations from the full ingested time course, builds an Isolation Forest Hamming distance matrix, and computes Hartigan's $D$ across 200 iterations. Because random samples are dominated by normal operations, this preserves the natural variable dependencies of the system. This also provides a conservative baseline for expected distance heterogeneity, by potentially incorporating some of the selected anomalies. 
 
-Repeated across Monte Carlo iterations, this establishes a baseline of expected distance heterogeneity. By sampling primarily from nominal operations, and not anomalies, the simulation preserves the multivariate dependencies of the dataset. This yields a conservative control to test whether the extracted anomalies exhibit greater distance heterogeneity than typical system variance.
 
-In @fig-naive-evaluate-stability, we observed a maximum $D$ of approximately 0.06 near $T = 0.653$. In the control plot, the 95th percentile of the control distribution remains below 0.045 across the entire sweep. This gap holds at all values of $N$, confirming that the distance heterogeneity observed in the anomaly matrix is a structural property of the faults, not a mathematical artifact.
+Comparing @fig-naive-evaluate-stability and @fig-naive-control-dip shows that for $T > 0.651$ ($N \le 100$), the observed $D$ rises from $0.05$ to $0.128$, whereas the 95th percentile of the control distribution never exceeds $0.043$. This confirms that the distance separation among the top anomalies is not a mathematical artifact caused by calculating $D$ over pairwise distances which are inherently interdependent.
 
 ```{r}
 #| label: naive-null-lid-profile-preparation
-#| eval: false
+#| eval: true
 #| echo: true
 #| code-fold: show
-#| code-summary: "Show Data Preparation (call to simulation helper)"
+#| code-summary: "Null LID Code"
 #| message: false
 #| warning: false
 
 library(purrr)
 library(dplyr)
 
-# Sweep the Monte Carlo simulation for the Naive Engine
-# Reusing the n_sequence defined in the previous Dip chunk
+# Run the LID Monte Carlo simulation across the same n_sequence
 lid_results_naive <- map_dfr(n_sequence, function(n) {
   res <- simulate_lid_control(engine, N = n, iterations = 200)
   res$Threshold <- get_threshold_at_N(engine, n)
@@ -885,31 +883,27 @@ lid_results_naive <- map_dfr(n_sequence, function(n) {
 
 ```{r}
 #| label: fig-lid-control
-#| eval: false
+#| eval: true
 #| echo: true
-#| code-summary: "Show Plot Call"
+#| code-summary: "Plot Call Code"
 #| message: false
 #| warning: false
 #| fig-width: 8
 #| fig-height: 5
-#| fig-cap: "Simulated Control Bounds for Local Intrinsic Dimensionality (LID). The observed dimensionality of the anomalies falls far below the 5% lower bound, confirming a severe structural break (variable coupling) during fault states."
-
-message(sprintf("Simulating random healthy LID space across %d steps...", length(n_sequence)))
+#| fig-cap: "Simulated control bounds for Local Intrinsic Dimensionality (LID)."
 
 fig_lid_naive <- plot_baseline_profile(
   lid_results_naive,
   line_color = "#CC79A7", 
   plot_title = "Control Quantiles for Intrinsic Dimensionality (Naive Configuration)",
-  plot_subtitle = "Median and [5%, 95%] bounds.",
+  plot_subtitle = "Median and [5%, 95%] bounds estimated with Monte Carlo simulations.",
   y_label = "Local Intrinsic Dimensionality (LID)"
 )
 
 print(fig_lid_naive)
 ```
 
-@fig-lid-control shows the results obtained when applying the same control strategy to LID. This provides a baseline of expected local intrinsic dimensionality.
-
-In @fig-naive-evaluate-stability, the most extreme anomalies are characterized by highly coupled, low values of LID (between 3.5 and 5.5). In contrast, the 5th percentile of the control distribution never drops below 7.0, with median states operating between 9 and 11 dimensions. Therefore, it is mathematically verified that the extracted anomaly clusters represent physical system breakdowns where independent variables lose dependencies.
+@fig-lid-control applies the same Monte Carlo control strategy to LID. While the observed anomaly LID in @fig-naive-evaluate-stability stays between $3.15$ and $5.4$, the 5th percentile of the control distribution in @fig-lid-control never drops below $7.1$ (with median values between $9.0$ and $11.2$). This confirms that the isolated anomalies exhibit strong variable coupling-i.e., a loss of variability-compared to normal system states. 
 
 ### 3.7 Archetypes Extractions
 
@@ -919,9 +913,9 @@ Note that this method does not return an isolated data point. The engine utilize
 
 ```{r}
 #| label: naive-medoids-extraction
-#| eval: false
+#| eval: true
 #| code-fold: show
-#| code-summary: "Show Medoids Extraction"
+#| code-summary: "Medoids Extraction Code"
 #| message: false
 #| warning: false
 
@@ -945,7 +939,7 @@ engine <- extract_medoids(engine, threshold = th_maxD_naive, k = target_k)
 #| message: false
 #| warning: false
 #| echo: true
-#| code-summary: "Show Medoid Plot Function"
+#| code-summary: "Medoid Plot Code"
 
 library(ggplot2)
 library(dplyr)
@@ -1062,9 +1056,9 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, l
 
 ```{r}
 #| label: fig-naive-medoids
-#| eval: false
+#| eval: true
 #| echo: true
-#| code-summary: "Show Medoids Plot Call"
+#| code-summary: "Plot Call Code"
 #| message: false
 #| warning: false
 #| fig-width: 10
