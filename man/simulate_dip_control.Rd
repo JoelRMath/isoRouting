@@ -6,20 +6,6 @@
 \usage{
 simulate_dip_control(object, N, iterations = 200)
 }
-\arguments{
-\item{object}{A \code{DiagnosticEngine} object.}
-
-\item{N}{Integer. The subset size to sample.}
-
-\item{iterations}{Integer. Number of Monte Carlo iterations (default is 200).}
-}
-\value{
-A \code{data.frame} containing the sample size (\code{N}),
-\code{Median}, \code{Q05}, and \code{Q95} bounds of the simulated Dip statistics.
-}
 \description{
-Estimates the baseline distance heterogeneity (Hartigan's D) by uniformly
-sampling N observations from the complete time course. This preserves natural
-multivariate dependencies and physical constraints, providing a conservative
-control baseline against which anomaly clustering can be evaluated.
+Simulate Control Quantiles for Hartigan's Dip Statistic
 }

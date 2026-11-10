@@ -6,22 +6,6 @@
 \usage{
 simulate_lid_control(engine, N, iterations = 200, k = 5)
 }
-\arguments{
-\item{engine}{A populated \code{DiagnosticEngine} object.}
-
-\item{N}{Integer. The subset size to sample.}
-
-\item{iterations}{Integer. Number of Monte Carlo iterations. Default is 200.}
-
-\item{k}{Integer. The number of nearest neighbors for LID estimation. Default is 5.}
-}
-\value{
-A data.frame containing N, Median, and quantiles (5\%, 25\%, 50\%, 75\%, 95\%).
-}
 \description{
-Generates an expected baseline distribution for LID
-by uniformly sampling N observations from the complete time course.
-This preserves natural multivariate dependencies and physical constraints,
-providing a conservative control baseline against which anomaly breakdown
-(variable coupling) can be evaluated.
+Simulate Control Quantiles for Local Intrinsic Dimensionality (LID)
 }

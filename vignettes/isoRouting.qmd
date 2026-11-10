@@ -54,7 +54,7 @@ nocite: |
 
 Building predictive diagnostic models for multivariate time series often begins with feature selection. A standard machine learning reflex is to compute a linear correlation matrix to identify and drop redundant variables. While useful for simple stochastic processes, this linear assumption frequently breaks down in physical domains.
 
-In industrial Internet of Things (IoT) environments, for example, variables are governed by causal, closed-loop mechanics. To illustrate this, we load the `hvac_features` dataset (Turin HVAC telemetry [@borda2022development]) provided with `isoRouting` and examine the linear correlation across its 11 telemetry channels.
+In industrial Internet of Things (IoT) environments, for example, variables are governed by causal, closed-loop mechanics. To illustrate this, we load the `hvac_features` dataset (Turin HVAC telemetry [@borda2022development]) provided with `isoRouting` and examine the linear correlation across its 10 telemetry channels.
 
 
 ```{r}
@@ -797,12 +797,7 @@ library(purrr)
 library(dplyr)
 
 n_sequence <- seq(20, 100, by = 10)
-
-dip_control_naive <- map_dfr(n_sequence, function(n) {
-  res <- simulate_dip_control(engine, N = n, iterations = 200)
-  res$Threshold <- get_threshold_at_N(engine, n)
-  return(res)
-})
+dip_control_naive <- simulate_dip_control(engine, N = n_sequence, iterations = 200)
 ```
 
 ```{r}
@@ -847,7 +842,7 @@ plot_baseline_profile <- function(results_df, line_color, plot_title, plot_subti
 # Generate the Naive Dip Plot
 fig_dip_null_naive <- plot_baseline_profile(
   dip_control_naive,
-  line_color = "#D55E00", 
+  line_color = "#009E73", 
   plot_title = "Control Quantiles for Hartigan's D (Naive Configuration)",
   plot_subtitle = "Median and [5%, 95%] bounds estimated with Monte Carlo simulations.",
   y_label = "Hartigan's D"
@@ -859,7 +854,7 @@ print(fig_dip_null_naive)
 For each sample size $N \in [20, 100]$, `simulate_dip_control()` uniformly samples $N$ observations from the full ingested time course, builds an Isolation Forest Hamming distance matrix, and computes Hartigan's $D$ across 200 iterations. Because random samples are dominated by normal operations, this preserves the natural variable dependencies of the system. This also provides a conservative baseline for expected distance heterogeneity, by potentially incorporating some of the selected anomalies. 
 
 
-Comparing @fig-naive-evaluate-stability and @fig-naive-control-dip shows that for $T > 0.651$ ($N \le 100$), the observed $D$ rises from $0.05$ to $0.128$, whereas the 95th percentile of the control distribution never exceeds $0.043$. This confirms that the distance separation among the top anomalies is not a mathematical artifact caused by calculating $D$ over pairwise distances which are inherently interdependent.
+Comparing @fig-naive-evaluate-stability and @fig-naive-control-dip shows that for $T > 0.651$ ($N \le 100$), the observed $D$ rises from $0.05$ to $0.128$, whereas the 95th percentile of the control distribution remains below $0.044$ across most of the sweep and reaches at most $0.050$ at $N = 20$. This confirms that the distance separation among the top anomalies is not a mathematical artifact caused by calculating $D$ over pairwise distances, which are inherently interdependent.
 
 ```{r}
 #| label: naive-null-lid-profile-preparation
@@ -874,11 +869,7 @@ library(purrr)
 library(dplyr)
 
 # Run the LID Monte Carlo simulation across the same n_sequence
-lid_results_naive <- map_dfr(n_sequence, function(n) {
-  res <- simulate_lid_control(engine, N = n, iterations = 200)
-  res$Threshold <- get_threshold_at_N(engine, n)
-  return(res)
-})
+lid_results_naive <- simulate_lid_control(engine, N = n_sequence, iterations = 200)
 ```
 
 ```{r}
@@ -903,7 +894,7 @@ fig_lid_naive <- plot_baseline_profile(
 print(fig_lid_naive)
 ```
 
-@fig-lid-control applies the same Monte Carlo control strategy to LID. While the observed anomaly LID in @fig-naive-evaluate-stability stays between $3.15$ and $5.4$, the 5th percentile of the control distribution in @fig-lid-control never drops below $7.1$ (with median values between $9.0$ and $11.2$). This confirms that the isolated anomalies exhibit strong variable coupling-i.e., a loss of variability-compared to normal system states. 
+@fig-lid-control applies the same Monte Carlo control strategy to LID. While the observed anomaly LID in @fig-naive-evaluate-stability stays between $3.15$ and $5.4$, the 5th percentile of the control distribution in @fig-lid-control never drops below $8.0$ (with median values between $9.8$ and $12.8$). This confirms that the isolated anomalies exhibit strong variable coupling—i.e., a loss of variability—compared to normal system states.
 
 ### 3.7 Archetypes Extractions
 
@@ -1089,7 +1080,7 @@ We next illustrate the use of LID by extracting medoids at its lowest value.
 
 ```{r}
 #| label: lid-medoids-extraction
-#| eval: false
+#| eval: true
 #| code-fold: show
 #| code-summary: "Show Medoids Extraction (Min LID)"
 #| message: false
@@ -1104,7 +1095,7 @@ engine <- extract_medoids(engine, threshold = th_minLID_naive, k = NULL)
 
 ```{r}
 #| label: fig-lid-medoids-plot
-#| eval: false
+#| eval: true
 #| echo: true
 #| message: false
 #| warning: false
@@ -1135,13 +1126,13 @@ Lastly, when fragmentation is suspected to be occuring in clustering, optional a
 
 ## 4 Engineering Features for the Turin HVAC dataset
 
-Utilizing the raw features of the Turin HVAC dataset yielded only two fault archetypes. Raw features are static in the sense that they do not include concept of temporal evolution of variables. To evaluate strategies of feature engineering that would better reflect dynamics of the system, a simple approach is to first look at a short continuous time course of the raw features.
+Raw sensor channels are static: each observation records the state of the system at a single `timestamp` without capturing how variables evolve over time. To design features that reflect the dynamics of the HVAC unit, we first inspect a continuous one-week window of the raw telemetry.
 
 ```{r}
 #| label: fig-data-exploration-all
 #| warning: false
 #| message: false
-#| echo: false
+#| echo: true
 #| fig-width: 10
 #| fig-height: 12
 #| fig-cap: "1-Week Time Course of All System Variables"
@@ -1193,11 +1184,11 @@ ggplot(hvac_plot_all, aes(x = timestamp, y = Value, color = Variable)) +
   )
 ```
 
-The most prominent characteristics in @fig-data-exploration-all are the step changes across variables like energy, power, and t_supply. These jumps reflect the causal, closed-loop control mechanics of the HVAC system: crossing a programmed threshold triggers a quick mechanical response.
+The most prominent characteristics in @fig-data-exploration-all are the step changes across variables like `energy`, `power`, and `t_supply`. These jumps reflect the causal, closed-loop control mechanics of the HVAC system: crossing a programmed threshold triggers a quick mechanical response.
 
-These abrupt changes explain the geometric fragmentation previously observed in @fig-pairs-plot. Because the system rapidly changes between discrete operational states, the pairwise scatterplots manifest as isolated lines and dense clouds devoid of intermediate values. Since these sudden transitions drive the actual physical behavior of the unit, static values of sensor readings are insufficient. To isolate meaningful operational archetypes, we must engineer kinematic features—for instance short time derivatives—that encode these rates of change [@blazquez2021review; @cook2019anomaly].
+These rapid state transitions also explain the separated clusters and sharp boundaries seen earlier in @fig-pairs-plot. Because the unit switches quickly between discrete operating regimes, pairwise scatterplots appear as isolated lines and dense clouds with few intermediate values. To capture the transitions that govern the unit's physical behavior, we must engineer temporal features—such as short-term differences and state durations—that encode rates of change [@blazquez2021review; @cook2019anomaly].
 
-We next present feature data analyses that justify the way we engineer them.
+The following subsections examine the raw variable distributions and state transitions to motivate each engineered feature.
 
 ### 4.1 Power and Energy
 
@@ -2036,7 +2027,7 @@ Such as we did with the naive configuration we also check that values of $D$ and
 
 ```{r}
 #| label: engineered-null-preparation
-#| eval: false
+#| eval: true
 #| echo: true
 #| code-fold: show
 #| code-summary: "Simulate Engineered Controls"
@@ -2044,22 +2035,13 @@ Such as we did with the naive configuration we also check that values of $D$ and
 #| warning: false
 
 # Generate control quantiles using the engineered engine
-dip_control_engineered <- map_dfr(n_sequence, function(n) {
-  res <- simulate_dip_control(engine_engineered, N = n, iterations = 200)
-  res$Threshold <- get_threshold_at_N(engine_engineered, n)
-  return(res)
-})
-
-lid_control_engineered <- map_dfr(n_sequence, function(n) {
-  res <- simulate_lid_control(engine_engineered, N = n, iterations = 200)
-  res$Threshold <- get_threshold_at_N(engine_engineered, n)
-  return(res)
-})
+lid_control_engineered <- simulate_lid_control(engine_baseline, N = n_sequence, iterations = 200)
+dip_control_engineered <- simulate_dip_control(engine_baseline, N = n_sequence, iterations = 200)
 ```
 
 ```{r}
 #| label: fig-engineered-control-dip
-#| eval: false
+#| eval: true
 #| echo: true
 #| code-summary: "Plot Engineered Control: Hartigan's D"
 #| message: false
@@ -2070,7 +2052,7 @@ lid_control_engineered <- map_dfr(n_sequence, function(n) {
 
 fig_dip_null_eng <- plot_baseline_profile(
   dip_control_engineered,
-  line_color = "#0072B2", 
+  line_color = "#009E73", 
   plot_title = "Engineered Control: Hartigan's D",
   plot_subtitle = "Expected distance heterogeneity.",
   y_label = "Hartigan's D"
@@ -2080,7 +2062,7 @@ print(fig_dip_null_eng)
 
 ```{r}
 #| label: fig-engineered-control-lid
-#| eval: false
+#| eval: true
 #| echo: true
 #| code-summary: "Plot Engineered Control: LID"
 #| message: false
@@ -2091,7 +2073,7 @@ print(fig_dip_null_eng)
 
 fig_lid_null_eng <- plot_baseline_profile(
   lid_control_engineered,
-  line_color = "#009E73", 
+  line_color = "#CC79A7", 
   plot_title = "Engineered Control: LID",
   plot_subtitle = "Expected structural dimensionality.",
   y_label = "LID"

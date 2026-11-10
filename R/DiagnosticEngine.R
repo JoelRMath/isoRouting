@@ -1027,23 +1027,29 @@ setMethod("get_threshold_at_N", signature("DiagnosticEngine"), function(object, 
     n <- n_rows
   }
   
-  hyps <- object@hyperparameters
-  actual_size <- min(hyps$sample_size, n_rows)
-  
-  # Set seed to ensure consistency with stability sweep logic
-  set.seed(42)
-  temp_model <- suppressWarnings(
-    isotree::isolation.forest(
-      features, 
-      ntrees = hyps$ntrees, 
-      sample_size = actual_size, 
-      missing_action = "fail"
+  # 1. Fast path: reuse cached anomaly scores if already computed
+  if (nrow(object@scored_time_course) == n_rows && "anomaly_score" %in% colnames(object@scored_time_course)) {
+    scores <- object@scored_time_course$anomaly_score
+  } else if (!is.null(object@model)) {
+    # 2. Reuse trained model if available
+    scores <- stats::predict(object@model, features)
+  } else {
+    # 3. Fallback: train temporary model only if uninitialized
+    hyps <- object@hyperparameters
+    actual_size <- min(hyps$sample_size, n_rows)
+    set.seed(42)
+    temp_model <- suppressWarnings(
+      isotree::isolation.forest(
+        features, 
+        ntrees = hyps$ntrees, 
+        sample_size = actual_size, 
+        missing_action = "fail"
+      )
     )
-  )
+    scores <- stats::predict(temp_model, features)
+  }
   
-  scores <- stats::predict(temp_model, features)
   sorted_scores <- sort(scores, decreasing = TRUE)
-  
   return(sorted_scores[n])
 })
 

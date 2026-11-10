@@ -118,37 +118,29 @@ check_time_continuity <- function(time_vector, tolerance = 0) {
 #' @return A list containing Global_LID, Min_Cluster_LID, and Max_Cluster_LID
 #' @export
 compute_lid_profile <- function(dist_mat, cluster_labels, k = 5, eps = 1e-8) {
-  
-  # Coerce 'dist' objects to full matrix if necessary
   if (inherits(dist_mat, "dist")) dist_mat <- as.matrix(dist_mat)
   
   N <- nrow(dist_mat)
-  lids <- numeric(N)
+  # Ensure diagonal is -Inf so sorting places self-distance at index 1
+  diag(dist_mat) <- -Inf
   
-  for (i in 1:N) {
-    # Extract distances to all OTHER points
-    d_all <- dist_mat[i, -i]
-    
-    # Sort to find the k-nearest neighbors
-    d_sorted <- sort(d_all)
-    r_i <- d_sorted[1:k]
-    r_k <- r_i[k]
-    
-    if (r_k < eps) {
-      # If the k-th neighbor is perfectly identical, the local dimension is 0
-      lids[i] <- 0
-    } else {
-      # Clamp r_i to eps to avoid log(0) for closer identical neighbors
-      r_i_clamped <- pmax(r_i, eps)
-      ratio <- r_i_clamped / max(r_k, eps)
-      
-      # Classic LID Maximum Likelihood Estimator
-      lid_val <- - ( (1/k) * sum(log(ratio)) )^(-1)
-      lids[i] <- max(0, lid_val)
-    }
+  # Sort each column once; rows 2:(k+1) are the k nearest neighbors for each observation
+  sorted_mat <- apply(dist_mat, 2, sort)
+  knn_mat <- sorted_mat[2:(k + 1), , drop = FALSE]
+  r_k <- knn_mat[k, ]
+  
+  lids <- numeric(N)
+  valid <- r_k >= eps
+  
+  if (any(valid)) {
+    knn_valid <- pmax(knn_mat[, valid, drop = FALSE], eps)
+    rk_valid <- pmax(r_k[valid], eps)
+    # Vectorized log-ratio sum across the k neighbors
+    log_ratios <- log( sweep(knn_valid, 2, rk_valid, "/") )
+    lid_vals <- -1 / colMeans(log_ratios)
+    lids[valid] <- pmax(0, lid_vals)
   }
   
-  # Aggregate by cluster
   cluster_means <- tapply(lids, cluster_labels, mean, na.rm = TRUE)
   
   return(list(
@@ -159,136 +151,158 @@ compute_lid_profile <- function(dist_mat, cluster_labels, k = 5, eps = 1e-8) {
 }
 
 #' @title Simulate Control Quantiles for Local Intrinsic Dimensionality (LID)
-#' @description Generates an expected baseline distribution for LID 
-#' by uniformly sampling N observations from the complete time course. 
-#' This preserves natural multivariate dependencies and physical constraints, 
-#' providing a conservative control baseline against which anomaly breakdown 
-#' (variable coupling) can be evaluated.
-#' @param engine A populated `DiagnosticEngine` object.
-#' @param N Integer. The subset size to sample.
-#' @param iterations Integer. Number of Monte Carlo iterations. Default is 200.
-#' @param k Integer. The number of nearest neighbors for LID estimation. Default is 5.
-#' @return A data.frame containing N, Median, and quantiles (5%, 25%, 50%, 75%, 95%).
 #' @export
 simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
   features <- engine@feature_matrix
   total_rows <- nrow(features)
   
-  if (N > total_rows) {
+  if (any(N > total_rows)) {
     stop("N cannot exceed total ingested observations.")
   }
   
-  hyps <- engine@hyperparameters
-  ntrees <- hyps$ntrees
-  
-  lids <- numeric(iterations)
-  
-  for (i in seq_len(iterations)) {
-    # Conservative baseline: sample directly from the entire dataset
-    sampled_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
-    block_features <- features[sampled_idx, , drop = FALSE]
-    
-    # Train temporary model
+  # 1. Reuse trained model if available; otherwise fit once
+  iso_model <- engine@model
+  if (is.null(iso_model)) {
+    hyps <- engine@hyperparameters
+    set.seed(42)
     iso_model <- suppressWarnings(
-      isotree::isolation.forest(block_features, ntrees = ntrees, sample_size = N, missing_action = "fail")
+      isotree::isolation.forest(
+        features,
+        ntrees = hyps$ntrees,
+        sample_size = min(hyps$sample_size, total_rows),
+        missing_action = "fail"
+      )
     )
-    
-    # --- EXACT PARITY WITH compute_distances() ---
-    # 1. Extract terminal nodes
-    node_matrix <- stats::predict(iso_model, block_features, type = "tree_num")
-    
-    # 2. Compute vectorized proportional Hamming distance
-    t_nodes <- t(node_matrix)
-    n_trees_actual <- nrow(t_nodes)
-    n_obs <- ncol(t_nodes)
-    
-    d_mat <- vapply(
-      seq_len(n_obs),
-      function(j) colSums(t_nodes != t_nodes[, j]) / n_trees_actual,
-      numeric(n_obs)
-    )
-    d_mat <- as.matrix(d_mat)
-    dimnames(d_mat) <- NULL
-    # ---------------------------------------------
-    
-    # Compute LID profile using existing helper
-    lid_res <- compute_lid_profile(d_mat, cluster_labels = rep(1, N), k = k)
-    lids[i] <- lid_res$Global_LID
   }
   
-  quant <- stats::quantile(lids, probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE)
+  # 2. Reuse cached scores for Threshold mapping if available; otherwise predict once
+  if (nrow(engine@scored_time_course) == total_rows && "anomaly_score" %in% colnames(engine@scored_time_course)) {
+    scores <- engine@scored_time_course$anomaly_score
+  } else {
+    scores <- stats::predict(iso_model, features)
+  }
+  sorted_scores <- sort(scores, decreasing = TRUE)
   
-  return(data.frame(
-    N = N,
-    Median = median(lids, na.rm = TRUE),
-    Q05 = quant[1],
-    Q25 = quant[2],
-    Q50 = quant[3],
-    Q75 = quant[4],
-    Q95 = quant[5]
-  ))
+  # 3. Extract terminal leaf signatures ONCE across all N values
+  t_all_nodes <- t(stats::predict(iso_model, features, type = "tree_num"))
+  n_trees_actual <- nrow(t_all_nodes)
+  
+  N_vec <- as.integer(N)
+  max_N <- max(N_vec)
+  
+  # Matrix to store MC results: rows = iterations, cols = length(N_vec)
+  lid_mat <- matrix(NA_real_, nrow = iterations, ncol = length(N_vec))
+  
+  for (i in seq_len(iterations)) {
+    # Sample max_N points once and compute the max_N x max_N Hamming matrix
+    sampled_idx <- sample.int(total_rows, size = max_N, replace = FALSE)
+    t_nodes <- t_all_nodes[, sampled_idx, drop = FALSE]
+    
+    master_d <- vapply(
+      seq_len(max_N),
+      function(j) colSums(t_nodes != t_nodes[, j]) / n_trees_actual,
+      numeric(max_N)
+    )
+    
+    # Subset the precomputed matrix for each requested n in N_vec
+    for (idx_n in seq_along(N_vec)) {
+      curr_n <- N_vec[idx_n]
+      sub_d <- master_d[seq_len(curr_n), seq_len(curr_n), drop = FALSE]
+      lid_Mat_res <- compute_lid_profile(sub_d, cluster_labels = rep(1L, curr_n), k = k)
+      lid_mat[i, idx_n] <- lid_Mat_res$Global_LID
+    }
+  }
+  
+  # Summarize quantiles for each N
+  res_list <- lapply(seq_along(N_vec), function(idx_n) {
+    lids <- lid_mat[, idx_n]
+    quant <- stats::quantile(lids, probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE)
+    data.frame(
+      N = N_vec[idx_n],
+      Median = stats::median(lids, na.rm = TRUE),
+      Q05 = unname(quant[1]),
+      Q25 = unname(quant[2]),
+      Q50 = unname(quant[3]),
+      Q75 = unname(quant[4]),
+      Q95 = unname(quant[5]),
+      Threshold = sorted_scores[N_vec[idx_n]]
+    )
+  })
+  
+  return(do.call(rbind, res_list))
 }
 
 #' Simulate Control Quantiles for Hartigan's Dip Statistic
-#'
-#' Estimates the baseline distance heterogeneity (Hartigan's D) by uniformly 
-#' sampling N observations from the complete time course. This preserves natural 
-#' multivariate dependencies and physical constraints, providing a conservative 
-#' control baseline against which anomaly clustering can be evaluated.
-#'
-#' @param object A \code{DiagnosticEngine} object.
-#' @param N Integer. The subset size to sample.
-#' @param iterations Integer. Number of Monte Carlo iterations (default is 200).
-#'
-#' @return A \code{data.frame} containing the sample size (\code{N}), 
-#' \code{Median}, \code{Q05}, and \code{Q95} bounds of the simulated Dip statistics.
 #' @export
 simulate_dip_control <- function(object, N, iterations = 200) {
   features <- object@feature_matrix
   total_rows <- nrow(features)
   
-  if (N > total_rows) stop("N cannot exceed total ingested observations.")
+  if (any(N > total_rows)) stop("N cannot exceed total ingested observations.")
   
-  dip_results <- numeric(iterations)
-  
-  for (i in seq_len(iterations)) {
-    # Conservative baseline: sample directly from the real, bounded topology
-    sample_idx <- sample(seq_len(total_rows), size = N, replace = FALSE)
-    sampled_features <- features[sample_idx, , drop = FALSE]
-    
-    # Train temporary model
-    temp_model <- suppressWarnings(
-      isotree::isolation.forest(sampled_features, ntrees = object@hyperparameters$ntrees)
+  # 1. Reuse trained model if available; otherwise fit once
+  iso_model <- object@model
+  if (is.null(iso_model)) {
+    hyps <- object@hyperparameters
+    set.seed(42)
+    iso_model <- suppressWarnings(
+      isotree::isolation.forest(
+        features,
+        ntrees = hyps$ntrees,
+        sample_size = min(hyps$sample_size, total_rows),
+        missing_action = "fail"
+      )
     )
-    
-    # --- EXACT PARITY WITH compute_distances() ---
-    # 1. Extract terminal nodes
-    node_matrix <- stats::predict(temp_model, sampled_features, type = "tree_num")
-    
-    # 2. Compute vectorized proportional Hamming distance
-    t_nodes <- t(node_matrix)
-    n_trees <- nrow(t_nodes)
-    n_obs <- ncol(t_nodes)
-    
-    dist_matrix <- vapply(
-      seq_len(n_obs),
-      function(j) colSums(t_nodes != t_nodes[, j]) / n_trees,
-      numeric(n_obs)
-    )
-    dist_matrix <- as.matrix(dist_matrix)
-    dimnames(dist_matrix) <- NULL
-    # ---------------------------------------------
-    
-    # Compute Hartigan's D 
-    dip_results[i] <- compute_dip_statistic(dist_matrix)
   }
   
-  data.frame(
-    N = N,
-    Median = median(dip_results, na.rm = TRUE),
-    Q05 = quantile(dip_results, 0.05, na.rm = TRUE),
-    Q95 = quantile(dip_results, 0.95, na.rm = TRUE)
-  )
+  # 2. Reuse cached scores for Threshold mapping if available; otherwise predict once
+  if (nrow(object@scored_time_course) == total_rows && "anomaly_score" %in% colnames(object@scored_time_course)) {
+    scores <- object@scored_time_course$anomaly_score
+  } else {
+    scores <- stats::predict(iso_model, features)
+  }
+  sorted_scores <- sort(scores, decreasing = TRUE)
+  
+  # 3. Extract terminal leaf signatures ONCE across all N values
+  t_all_nodes <- t(stats::predict(iso_model, features, type = "tree_num"))
+  n_trees <- nrow(t_all_nodes)
+  
+  N_vec <- as.integer(N)
+  max_N <- max(N_vec)
+  
+  dip_mat <- matrix(NA_real_, nrow = iterations, ncol = length(N_vec))
+  
+  for (i in seq_len(iterations)) {
+    # Sample max_N points once and compute the max_N x max_N Hamming matrix
+    sample_idx <- sample.int(total_rows, size = max_N, replace = FALSE)
+    t_nodes <- t_all_nodes[, sample_idx, drop = FALSE]
+    
+    master_dist <- vapply(
+      seq_len(max_N),
+      function(j) colSums(t_nodes != t_nodes[, j]) / n_trees,
+      numeric(max_N)
+    )
+    
+    # Subset the precomputed matrix for each requested n in N_vec
+    for (idx_n in seq_along(N_vec)) {
+      curr_n <- N_vec[idx_n]
+      sub_dist <- master_dist[seq_len(curr_n), seq_len(curr_n), drop = FALSE]
+      dip_mat[i, idx_n] <- compute_dip_statistic(sub_dist)
+    }
+  }
+  
+  res_list <- lapply(seq_along(N_vec), function(idx_n) {
+    dips <- dip_mat[, idx_n]
+    data.frame(
+      N = N_vec[idx_n],
+      Median = stats::median(dips, na.rm = TRUE),
+      Q05 = unname(stats::quantile(dips, 0.05, na.rm = TRUE)),
+      Q95 = unname(stats::quantile(dips, 0.95, na.rm = TRUE)),
+      Threshold = sorted_scores[N_vec[idx_n]]
+    )
+  })
+  
+  return(do.call(rbind, res_list))
 }
 
 #' @title Compute Hartigan's Dip Statistic
