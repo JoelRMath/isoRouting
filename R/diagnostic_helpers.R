@@ -31,12 +31,12 @@ assess_forest_stability <- function(data,
   # 1. Establish the Baseline Ground-Truth Model
   message(sprintf("Fitting %d-tree baseline model for ground-truth rankings...", baseline_trees))
   set.seed(seed)
-  baseline_model <- isotree::isolation.forest(
+  baseline_model <- suppressWarnings(isotree::isolation.forest(
     feature_matrix, 
     ntrees = baseline_trees, 
     sample_size = min(max(sample_sizes), nrow(feature_matrix)), 
     missing_action = "fail"
-  )
+  ))
   baseline_scores <- stats::predict(baseline_model, feature_matrix)
   
   # 2. Grid Search Initialization

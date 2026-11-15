@@ -774,8 +774,7 @@ setMethod("commit_ledger", "DiagnosticEngine", function(object, k = NULL) {
   
   message("Ledger successfully committed and ranked. Call `get_ledger(engine)` to export.")
   message("Empirical event horizons locked for predictive routing.")
-  message("Ledger successfully committed and ranked. Call `get_ledger(engine)` to export.")
-  
+
   return(object)
 })
 
@@ -1049,7 +1048,7 @@ setMethod("get_threshold_at_N", signature("DiagnosticEngine"), function(object, 
     scores <- stats::predict(temp_model, features)
   }
   
-  sorted_scores <- sort(scores, decreasing = TRUE)
+  sorted_scores <- sort( unname(scores), decreasing = TRUE)
   return(sorted_scores[n])
 })
 

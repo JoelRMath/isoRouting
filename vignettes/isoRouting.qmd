@@ -464,6 +464,7 @@ Ingesting a 6-month gap would severely distort estimations performed by `isoRout
 
 Therefore, we will split the dataset into two distinct periods across the 6-month boundary. We will use both early and late segments for different purposes in this vignette. We also verify that both segments are continuous within a 7-day tolerance.
 
+<span id="data-split-and-validation" class="flash-target" style="color: #0072B2;">Data Split and Validation</span>
 ```{r}
 #| label: data-split-and-validation
 #| echo: true
@@ -508,14 +509,14 @@ if (!baseline_check$is_continuous || !stream_check$is_continuous) {
 
 ### 3.2 Engine Configuration and Initialization
 
-The `DiagnosticEngine` uses a YAML configuration file to define its model parameters and feature schema[cite: 2, 3]. We start with a naive configuration that passes the raw sensor readings directly to the model[cite: 3].
+The `DiagnosticEngine` uses a YAML configuration file to define its model parameters and feature schema. We start with a naive configuration that passes the raw sensor readings directly to the model.
 
-In `isoRouting`, the schema divides variables into two categories[cite: 3]:
+In `isoRouting`, the schema divides variables into two categories:
 
-- **Target Variables:** Variables used by the Isolation Forest to score anomalies and compute forest-based distances[cite: 3].
-- **Context Variables:** Variables excluded from the model, but retained within the extracted medoid time windows for visual interpretation[cite: 3].
+- **Target Variables:** Variables used by the Isolation Forest to score anomalies and compute forest-based distances.
+- **Context Variables:** Variables excluded from the model, but retained within the extracted medoid time windows for visual interpretation.
 
-In this naive setup, we assign all 10 temperature, humidity, energy, and power channels as target variables and leave the context variables empty[cite: 3]. We then instantiate the S4 object with `new("DiagnosticEngine", config_path = ...)`[cite: 3].
+In this naive setup, we assign all 10 temperature, humidity, energy, and power channels as target variables and leave the context variables empty. We then instantiate the S4 object with `new("DiagnosticEngine", config_path = ...)`.
 
 ```{r}
 #| label: naive-initialization
@@ -578,11 +579,11 @@ glimpse(get_time_course(engine))
 
 ### 3.4 Anomaly Extraction via Isolation Forest
 
-With the time course ingested, we run `extract_anomalies()` to score the dataset and isolate extreme events[cite: 2, 3].
+With the time course ingested, we run `extract_anomalies()` to score the dataset and isolate extreme events.
 
-The `DiagnosticEngine` uses an Isolation Forest (`isotree`) to score the target variables[cite: 2, 3]. Rather than relying on geometric distances, Isolation Forests partition the data by randomly selecting a variable and a split value[cite: 3]. Because anomalies are rare and distinct, they require fewer splits to isolate, resulting in shorter path lengths in the decision trees and higher anomaly scores (scaled between 0 and 1)[cite: 3].
+The `DiagnosticEngine` uses an Isolation Forest (`isotree`) to score the target variables. Rather than relying on geometric distances, Isolation Forests partition the data by randomly selecting a variable and a split value. Because anomalies are rare and distinct, they require fewer splits to isolate, resulting in shorter path lengths in the decision trees and higher anomaly scores (scaled between 0 and 1).
 
-Using the YAML parameters (`ntrees: 500`, `sample_size: 256`), the engine trains the forest, scores the full baseline time course, and stores observations with scores at or above the `0.60` threshold in the `@anomalies` slot[cite: 2, 3].
+Using the YAML parameters (`ntrees: 500`, `sample_size: 256`), the engine trains the forest, scores the full baseline time course, and stores observations with scores at or above the `0.60` threshold in the `@anomalies` slot.
 
 ```{r}
 #| label: extract-anomalies
@@ -924,7 +925,7 @@ target_k <- NULL
 engine <- extract_medoids(engine, threshold = th_maxD_naive, k = target_k)
 ```
 
-<b id="medoids-ggplot-target" class="flash-target">Medoids Plotting Wrapper</b>
+<span id="medoids-ggplot-target" class="flash-target" style="color: #0072B2;">Medoids Plotting Wrapper</span>
 ```{r}
 #| label: medoids-ggplot-function
 #| message: false
@@ -1188,7 +1189,7 @@ The most prominent characteristics in @fig-data-exploration-all are the step cha
 
 These rapid state transitions also explain the separated clusters and sharp boundaries seen earlier in @fig-pairs-plot. Because the unit switches quickly between discrete operating regimes, pairwise scatterplots appear as isolated lines and dense clouds with few intermediate values. To capture the transitions that govern the unit's physical behavior, we must engineer temporal features—such as short-term differences and state durations—that encode rates of change [@blazquez2021review; @cook2019anomaly].
 
-The following subsections examine the raw variable distributions and state transitions to motivate each engineered feature.
+The following subsections examine the raw variable distributions and state transitions to design each engineered feature.
 
 ### 4.1 Power and Energy
 
@@ -1197,9 +1198,10 @@ The following subsections examine the raw variable distributions and state trans
 #| warning: false
 #| message: false
 #| echo: false
+#| code-summary: "Code"
 #| fig-width: 10
 #| fig-height: 8
-#| fig-cap: "Top: High-resolution marginal distributions of Energy and Power. Bottom: Transition matrices detailing the frequency of mechanical state changes (static continuous states are filtered out to highlight active transitions)."
+#| fig-cap: "Top: Distributions of Energy and Power. Bottom: Transition matrices detailing the frequency of state changes (static continuous states are filtered out to highlight active transitions)."
 
 library(ggplot2)
 library(dplyr)
@@ -1278,24 +1280,23 @@ p_heat_power <- plot_heatmap(trans_power, "Power Transitions", "#21918c")
 # --- 4. Combine with Patchwork ---
 layout <- (p_hist_energy | p_hist_power) / (p_heat_energy | p_heat_power)
 layout + plot_annotation(
-  title = "Mechanical Dynamics: Distributions and Transitions",
+  title = "Power and Energy: Distributions and Transitions",
   theme = theme(plot.title = element_text(size = 16, face = "bold"))
 )
 ```
 
-@fig-energy-power-mechanics displays the distributions and state transitions for both variables. The top histograms show they operate in three discrete bands: Low, Medium, and High. The transition heatmaps reveal control loops that frequently bypass the intermediate state; for instance, power relies heavily on direct Low-to-High and High-to-Low jumps. A simple first derivative ($\Delta_{15m}$) would create numerical ambiguity—a Low-to-Medium jump and a Medium-to-High jump would yield similar gradients. To avoid this, severity of these jumps is encoded by using magnitude-weighted derivatives:
-$$Value_t \times (Value_t - Value_{t-1})$$.
+@fig-energy-power-mechanics displays the distributions and state transitions for energy and power. The top histograms show that both variables operate in three discrete bands: Low (off/standby), Medium (partial load), and High (full load). The transition heatmaps in the bottom row show that the control loop frequently bypasses the intermediate state, relying heavily on direct Low-to-High and High-to-Low jumps. Because a simple first difference ($\Delta_{15m} = x_t - x_{t-1}$) treats a Low-to-Medium step ($\approx 0 \to 3$) and a Medium-to-High step ($\approx 3 \to 5.5$) as having similar magnitudes, we capture transitions with 15-minute differences weighted by the current load level:
+
+$$\text{dw\_x}(t) = x(t) \cdot \bigl(x(t) - x(t - 1)\bigr)$$
+This weighted derivative amplifies transitions that terminate at high power or energy loads and suppresses minor fluctuations near standby.
 
 ```{r}
-#| label: fig-energy-power-mismatch
+#| label: prep-energy-power-mismatch
 #| warning: false
 #| message: false
-#| echo: false
-#| fig-width: 6
-#| fig-height: 5
-#| fig-cap: "Co-occurrence matrix of Energy and Power states. Off-diagonal tiles represent temporal desynchronization where instantaneous power and accumulated energy do not perfectly align."
+#| echo: true
+#| code-summary: "Data Preparation: Energy and Power State Co-occurrence"
 
-library(ggplot2)
 library(dplyr)
 
 state_levels <- c("Low", "Medium", "High")
@@ -1305,50 +1306,474 @@ mismatch_data <- hvac_valid |>
   select(timestamp, energy, power) |>
   mutate(
     energy_state = factor(case_when(
-      energy >= 0 & energy < 5 ~ "Low",
+      energy >= 0 & energy < 5  ~ "Low",
       energy >= 5 & energy < 10 ~ "Medium",
-      energy >= 10 ~ "High"
+      energy >= 10              ~ "High"
     ), levels = state_levels),
     power_state = factor(case_when(
       power >= 0 & power < 2 ~ "Low",
       power >= 2 & power < 4 ~ "Medium",
-      power >= 4 ~ "High"
+      power >= 4             ~ "High"
     ), levels = state_levels)
   ) |>
   count(energy_state, power_state, name = "Count")
+```
 
-# Plot heatmap
+```{r}
+#| label: fig-energy-power-mismatch
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 6
+#| fig-height: 5
+#| fig-cap: "Co-occurrence matrix of Energy and Power states. Off-diagonal tiles represent temporal desynchronization where instantaneous power and accumulated energy do not perfectly align."
+
+library(ggplot2)
+
 ggplot(mismatch_data, aes(x = energy_state, y = power_state, fill = Count)) +
   geom_tile(color = "white", linewidth = 0.5) +
   # Dynamically change text color based on background darkness
   geom_text(aes(label = Count, color = Count > 1000), fontface = "bold", size = 5) +
   scale_color_manual(values = c("black", "white")) +
-  scale_fill_gradient(low = "grey95", high = "#e34a33", trans = "log10") + 
+  scale_fill_gradient(low = "grey95", high = "#e34a33", trans = "log10") +
   scale_x_discrete(drop = FALSE) +
   scale_y_discrete(drop = FALSE) +
   theme_minimal(base_size = 12) +
   labs(
     title = "Energy vs. Power: State Co-occurrence",
-    x = "Energy State (15-min Accumulated)",
-    y = "Power State (Instantaneous)"
+    x     = "Energy State (15-min Accumulated)",
+    y     = "Power State (Instantaneous)"
   ) +
   theme(
     legend.position = "none",
-    panel.grid = element_blank(),
-    axis.text = element_text(face = "bold")
+    panel.grid      = element_blank(),
+    axis.text       = element_text(face = "bold")
   )
 ```
-
-@fig-energy-power-mismatch evaluates the assumption of colinearity between `energy` and `power` and shows hundreds of off-diagonal state mismatches. 
-
-Therefore, in order to preserve mismatches as potential signs of an anomaly, we include both weighted derivatives of `energy` and `power` in our feature set:
+Although energy and power are strongly coupled across the time course, @fig-energy-power-mismatch reveals off-diagonal state mismatches where instantaneous power and 15-minute accumulated energy temporarily diverge during switching intervals. To preserve these desynchronizations as potential fault indicators, we include both weighted derivatives in the engineered feature set:
 
 `dw_power(t) = power(t)(power(t)-power(t-1))`<br>
 `dw_energy(t) = energy(t)(energy(t)-energy(t-1))`
 
+#### Run-Length Features
+
+We now examine the distributions of times spent in each `energy` and `power` mode (Low, Medium an High). We call these times *dwell times*. 
+
+
+```{r}
+#| label: prep-energy-power-mode-rle
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Data Preparation: Energy and Power Mode RLE Durations"
+
+library(dplyr)
+
+# 1. Classify Energy and Power into their discrete operating modes
+ep_modes <- hvac_valid |>
+  arrange(timestamp) |>
+  select(timestamp, energy, power) |>
+  filter(!is.na(energy) & !is.na(power)) |>
+  mutate(
+    energy_mode = case_when(
+      energy < 2.5  ~ "Low",
+      energy <= 7.5 ~ "Medium",
+      TRUE          ~ "High"
+    ),
+    power_mode = case_when(
+      power < 1.0   ~ "Low",
+      power <= 4.0  ~ "Medium",
+      TRUE          ~ "High"
+    )
+  )
+
+# 2. Helper to extract RLE durations (in hours) for each mode
+extract_mode_runs <- function(mode_vec, var_name) {
+  runs <- rle(mode_vec)
+  data.frame(
+    variable       = var_name,
+    mode           = factor(runs$values, levels = c("Low", "Medium", "High")),
+    length_15m     = runs$lengths,
+    duration_hours = runs$lengths * 0.25
+  )
+}
+
+mode_runs_df <- bind_rows(
+  extract_mode_runs(ep_modes$energy_mode, "Energy"),
+  extract_mode_runs(ep_modes$power_mode,  "Power")
+)
+
+# 3. Summary stats (Median, 95th percentile, and Max hours) for panel annotations
+mode_stats <- mode_runs_df |>
+  group_by(variable, mode) |>
+  summarise(
+    n_runs  = n(),
+    med_hrs = median(duration_hours),
+    q95_hrs = quantile(duration_hours, 0.95),
+    max_hrs = max(duration_hours),
+    .groups = "drop"
+  ) |>
+  mutate(
+    label = sprintf(
+      "Runs: %d\nMed: %.2f h\n95%%: %.1f h\nMax: %.1f h",
+      n_runs, med_hrs, q95_hrs, max_hrs
+    )
+  )
+```
+
+```{r}
+#| label: fig-energy-power-mode-rle
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 10
+#| fig-height: 6
+#| fig-cap: "Distribution of continuous dwell times (in hours) spent in Low, Medium, and High operating modes for Energy and Power."
+
+library(ggplot2)
+
+ggplot(mode_runs_df, aes(x = duration_hours, fill = mode)) +
+  geom_histogram(binwidth = 0.5, boundary = 0, color = "black", alpha = 0.8) +
+  facet_grid(variable ~ mode, scales = "free") +
+  geom_text(
+    data = mode_stats,
+    aes(x = Inf, y = Inf, label = label),
+    inherit.aes = FALSE,
+    hjust = 1.1, vjust = 1.1, fontface = "bold", size = 3.2, color = "grey20"
+  ) +
+  scale_fill_manual(values = c("Low" = "#3b528b", "Medium" = "#21918c", "High" = "#5ec962")) +
+  coord_cartesian(xlim = c(0, 24)) +
+  theme_bw(base_size = 12) +
+  labs(
+    title    = "Dwell-Time Distributions by Operating Mode (Energy & Power)",
+    subtitle = "Continuous hours spent in Low, Medium, and High states (x-axis zoomed to 0-24h)",
+    x        = "Continuous Dwell Time (Hours)",
+    y        = "Number of Runs"
+  ) +
+  theme(
+    legend.position  = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text       = element_text(face = "bold")
+  )
+```
+
+@fig-energy-power-mode-rle reveals wide distributions. Notice some peaks likely driven by programmed building schedules—such as the $9.5$-hour overnight shutdown peak in Low and the $9$- to $16$-hour daytime operating peaks in High. 
+
+Still, because these distributions remain wide, we next examine how adding these 6 dwell-time variables to the Isolation Forest training changes the distribution of anomaly scores, as compared to the final set of 24 engineered features we will ultimately select.
+
+```{r}
+#| label: prep-score-compression-24-vs-30
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Data Preparation: 24 vs. 30 Features Anomaly Scoring"
+
+library(dplyr)
+library(tidyr)
+library(isotree)
+
+# 1. Generate the 6 mode dwell-time columns in memory on hvac_features
+get_mode_rl <- function(val_vec, low_cut, high_cut, target_mode) {
+  mode_chr <- case_when(
+    is.na(val_vec)      ~ "Missing",
+    val_vec < low_cut   ~ "Low",
+    val_vec <= high_cut ~ "Medium",
+    TRUE                ~ "High"
+  )
+  tibble(m = mode_chr, grp = consecutive_id(mode_chr)) |>
+    group_by(grp) |>
+    mutate(rl = if_else(m == target_mode, as.numeric(row_number()), 0)) |>
+    pull(rl)
+}
+
+df_comp <- hvac_features |>
+  arrange(timestamp) |>
+  mutate(
+    power_low_run_len   = get_mode_rl(power,  1.0, 4.0, "Low"),
+    power_med_run_len   = get_mode_rl(power,  1.0, 4.0, "Medium"),
+    power_high_run_len  = get_mode_rl(power,  1.0, 4.0, "High"),
+    energy_low_run_len  = get_mode_rl(energy, 2.5, 7.5, "Low"),
+    energy_med_run_len  = get_mode_rl(energy, 2.5, 7.5, "Medium"),
+    energy_high_run_len = get_mode_rl(energy, 2.5, 7.5, "High")
+  )
+
+vars_24 <- c(
+  "dw_power", "dw_energy", "d_rh_outdoor", "d_t_outdoor",
+  "d_t_return_15m", "t_ret_run_length", "t_ret_displacement",
+  "control_error", "supply_delta",
+  "d_t_supply_15m", "t_sup_run_length", "t_sup_displacement",
+  "humidity_delta", "supply_margin", "return_margin",
+  "d_humidity_delta_15m", "run_length_humidity_delta", "displacement_humidity_delta",
+  "d_supply_margin_15m", "run_length_supply_margin", "displacement_supply_margin",
+  "d_return_margin_15m", "run_length_return_margin", "displacement_return_margin"
+)
+
+vars_30 <- c(
+  vars_24,
+  "power_low_run_len", "power_med_run_len", "power_high_run_len",
+  "energy_low_run_len", "energy_med_run_len", "energy_high_run_len"
+)
+
+fit_and_score <- function(df, cols) {
+  set.seed(42)
+  mat <- as.matrix(df[, cols])
+  iso <- isolation.forest(mat, ntrees = 500, sample_size = 256, seed = 42, missing_action = "fail")
+  predict(iso, mat)
+}
+
+scores_24_30 <- tibble(
+  `24 Features (Core Engineered)` = fit_and_score(df_comp, vars_24),
+  `30 Features (+6 Mode Dwell)`   = fit_and_score(df_comp, vars_30)
+) |>
+  pivot_longer(everything(), names_to = "Configuration", values_to = "Score") |>
+  mutate(Configuration = factor(
+    Configuration,
+    levels = c("24 Features (Core Engineered)", "30 Features (+6 Mode Dwell)")
+  ))
+
+# 2. Compute tail summary statistics for plot annotations (cutoff = 0.50)
+tail_stats <- scores_24_30 |>
+  group_by(Configuration) |>
+  summarise(
+    n_50    = sum(Score >= 0.50),
+    n_60    = sum(Score >= 0.60),
+    max_s   = max(Score),
+    .groups = "drop"
+  ) |>
+  mutate(
+    label = sprintf(
+      "Count (Score >= 0.50): %d\nCount (Score >= 0.60): %d\nMax Score: %.3f",
+      n_50, n_60, max_s
+    )
+  )
+```
+
+```{r}
+#| label: fig-score-compression-24-vs-30
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 9
+#| fig-height: 9
+#| fig-cap: "Comparison of Isolation Forest anomaly score distributions for the 24-feature core configuration versus the 30-feature configuration (+6 mode dwell-time counters). Top: Full score density overlay showing probability mass shifting from the right tail (>= 0.50) into the 0.35-0.42 bulk. Bottom: Upper-tail histograms (Score >= 0.50) on an identical y-axis."
+
+library(ggplot2)
+library(patchwork)
+
+# High-contrast Okabe-Ito palette: Vermilion Orange-Red vs. Navy Blue
+palette_contrast <- c(
+  "24 Features (Core Engineered)" = "#D55E00",
+  "30 Features (+6 Mode Dwell)"   = "#0072B2"
+)
+
+# 1. Top Panel: Full Anomaly Score Density Overlay
+p_density <- ggplot(scores_24_30, aes(x = Score, fill = Configuration, color = Configuration)) +
+  geom_density(alpha = 0.28, linewidth = 1.0) +
+  geom_vline(xintercept = 0.50, linetype = "dashed", color = "grey30", linewidth = 0.7) +
+  annotate(
+    "text", x = 0.505, y = 14, label = "Tail Cutoff (0.50) ->",
+    hjust = 0, fontface = "italic", size = 3.5, color = "grey20"
+  ) +
+  scale_fill_manual(values = palette_contrast) +
+  scale_color_manual(values = palette_contrast) +
+  theme_bw(base_size = 12) +
+  labs(
+    title    = "A. Full Anomaly Score Density Distributions (24 vs. 30 Features)",
+    subtitle = "Adding 6 mode dwell-time counters shifts probability mass from the right tail (>= 0.50) into the 0.35-0.42 bulk",
+    x        = "Anomaly Score",
+    y        = "Density"
+  ) +
+  theme(legend.position = "top")
+
+# 2. Bottom Panel: Upper Tail Comparison (Score >= 0.50) with Fixed Y-Axis
+p_tail <- ggplot(filter(scores_24_30, Score >= 0.50), aes(x = Score, fill = Configuration, color = Configuration)) +
+  geom_histogram(binwidth = 0.005, boundary = 0.50, alpha = 0.65, color = "white", linewidth = 0.2) +
+  facet_wrap(~Configuration, ncol = 1, scales = "fixed") +
+  geom_text(
+    data = tail_stats,
+    aes(x = Inf, y = Inf, label = label),
+    inherit.aes = FALSE,
+    hjust = 1.08, vjust = 1.25, fontface = "bold", size = 3.5, color = "grey15"
+  ) +
+  scale_fill_manual(values = palette_contrast) +
+  scale_color_manual(values = palette_contrast) +
+  theme_bw(base_size = 12) +
+  labs(
+    title    = "B. Upper Tail Comparison (Anomaly Score >= 0.50)",
+    subtitle = "Adding 6 mode dwell-time counters reduces observations with Score >= 0.60 from 194 to 15",
+    x        = "Anomaly Score",
+    y        = "Observation Count"
+  ) +
+  theme(
+    legend.position  = "none",
+    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
+    strip.text       = element_text(face = "bold")
+  )
+
+# 3. Combine with patchwork
+p_density / p_tail + plot_layout(heights = c(1, 1.35))
+```
+
+@fig-score-compression-24-vs-30 shows a drop in high anomaly scores when the 6 dwell-time counters are added to the final set of 24 features. This suggests that the added counters are not beneficial to anomaly detection, but instead detrimental.
+
+Now, the decrease in the anomaly score tail could be due to the dimension jump from 24 to 30 features. To confirm that the tail reduction is indeed caused by incorporating the dwell-time counters, we perform a fixed-dimension control experiment: the Isolation Forest is always trained on exactly 24 features drawn without replacement from the 30-feature pool using identical hyperparameters (`ntrees = 500`, `sample_size = 256`, `seed = 42`). We first evaluate 200 unconditional random subsets to establish an unbiased null distribution. Because subsets containing only one or two dwell-time counters rarely occur under uniform random draws, we supplement the experiment with 15 targeted random subsets for each of those two strata so the full dilution trajectory is visible across all counter counts ($k = 1$ through $6$). The results are summarized in @fig-mc-feature-subset-control.
+
+```{r}
+#| label: prep-mc-feature-subset-control
+#| warning: false
+#| message: false
+#| echo: true
+#| cache: true
+#| code-summary: "Data Preparation: Exact Monte Carlo 24-of-30 Feature Subset Permutation Test"
+
+library(dplyr)
+library(isotree)
+library(parallel)
+
+# 1. Prepare the 30-feature matrix (24 core + 6 mode dwell counters)
+dwell_cols <- c(
+  "power_low_run_len", "power_med_run_len", "power_high_run_len",
+  "energy_low_run_len", "energy_med_run_len", "energy_high_run_len"
+)
+
+mat_30  <- as.matrix(df_comp[, vars_30])
+n_cores <- max(1L, parallel::detectCores() - 1L)
+
+# 2. Evaluate the actual 24-feature core configuration (ntrees = 500, seed = 42)
+iso_core <- isolation.forest(
+  mat_30[, vars_24], ntrees = 500, sample_size = 256,
+  nthreads = 1L, seed = 42, missing_action = "fail"
+)
+scores_core      <- predict(iso_core, mat_30[, vars_24], nthreads = 1L)
+obs_tail_mass_50 <- mean(scores_core >= 0.50)
+
+# 3. Generate M = 200 unconditional random 24-feature subsets (for Panel A & p-value)
+M <- 200L
+set.seed(2026)
+uncond_subsets <- lapply(seq_len(M), function(i) {
+  sample(vars_30, size = 24, replace = FALSE)
+})
+
+# Supplement rare hypergeometric strata (k = 1 and k = 2) with 15 random subsets each
+# so Panel B displays the full stepwise dilution curve across all k in {1..6}
+sample_fixed_k <- function(k_target, n_reps) {
+  lapply(seq_len(n_reps), function(i) {
+    c(
+      sample(dwell_cols, size = k_target, replace = FALSE),
+      sample(vars_24, size = 24L - k_target, replace = FALSE)
+    )
+  })
+}
+
+supp_subsets <- c(sample_fixed_k(1L, 15L), sample_fixed_k(2L, 15L))
+all_subsets  <- c(uncond_subsets, supp_subsets)
+is_uncond    <- c(rep(TRUE, M), rep(FALSE, length(supp_subsets)))
+
+# 4. Evaluate each fixed 24-feature subset using an exact 500-tree Isolation Forest
+mc_workers <- if (.Platform$OS.type == "unix") n_cores else 1L
+
+mc_all <- parallel::mclapply(seq_along(all_subsets), function(i) {
+  sampled_vars <- all_subsets[[i]]
+  n_dwell_in   <- sum(sampled_vars %in% dwell_cols)
+  sub_mat      <- mat_30[, sampled_vars]
+  
+  iso_m <- isolation.forest(
+    sub_mat, ntrees = 500, sample_size = 256,
+    nthreads = 1L, seed = 42, missing_action = "fail"
+  )
+  sc_m <- predict(iso_m, sub_mat, nthreads = 1L)
+  
+  tibble(
+    iter          = i,
+    unconditional = is_uncond[i],
+    n_dwell       = factor(n_dwell_in, levels = as.character(0:6)),
+    tail_mass_50  = mean(sc_m >= 0.50)
+  )
+}, mc.cores = mc_workers) |> bind_rows()
+
+# Separate unconditional null draws (Panel A) from full stratified draws (Panel B)
+mc_uncond <- filter(mc_all, unconditional)
+
+# 5. Compute exact Phipson-Smyth permutation p-value on the unconditional draws
+emp_pct <- 100 * mean(mc_uncond$tail_mass_50 <= obs_tail_mass_50)
+p_val   <- (1 + sum(mc_uncond$tail_mass_50 >= obs_tail_mass_50)) / (M + 1)
+
+# 6. Reference point for the core 24-feature configuration (0 dwell counters)
+core_point_df <- tibble(
+  n_dwell      = factor("0", levels = as.character(0:6)),
+  tail_mass_50 = obs_tail_mass_50
+)
+```
+
+```{r}
+#| label: fig-mc-feature-subset-control
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 10
+#| fig-height: 5
+#| fig-cap: "Monte Carlo permutation distribution of upper-tail probability mass P(Score >= 0.50) across random subsets of 24 features drawn without replacement from the 30-feature pool (ntrees = 500). Left: Unconditional null distribution of 200 random 24-feature subsets versus the actual 24-feature core configuration (dashed orange-red line). Right: Stepwise dilution of upper-tail mass across all mode dwell-time counter counts k in {0, ..., 6}."
+
+library(ggplot2)
+library(patchwork)
+
+# 1. Panel A: Histogram of unconditional random 24-feature subsets
+p_hist_mc <- ggplot(mc_uncond, aes(x = tail_mass_50 * 100)) +
+  geom_histogram(bins = 25, fill = "#0072B2", color = "white", alpha = 0.75) +
+  geom_vline(xintercept = obs_tail_mass_50 * 100, color = "#D55E00", linetype = "dashed", linewidth = 1.1) +
+  annotate(
+    "text",
+    x = obs_tail_mass_50 * 100, y = Inf,
+    label = sprintf("Core 24 Set\n(%.2f%%, p = %.4f)", obs_tail_mass_50 * 100, p_val),
+    hjust = 1.08, vjust = 1.4, fontface = "bold", color = "#D55E00", size = 3.5
+  ) +
+  theme_bw(base_size = 12) +
+  labs(
+    title    = "A. Null Distribution of Tail Mass (d = 24)",
+    subtitle = "200 random 24-of-30 subsets (ntrees = 500)",
+    x        = "Upper-Tail Mass: % with Score >= 0.50",
+    y        = "Number of Random Subsets"
+  )
+
+# 2. Panel B: Stepwise Dilution by Number of Included Mode Dwell Counters (0 to 6)
+p_dwell_effect <- ggplot(mc_all, aes(x = n_dwell, y = tail_mass_50 * 100)) +
+  geom_boxplot(fill = "#0072B2", alpha = 0.35, outlier.shape = NA, width = 0.5) +
+  geom_jitter(width = 0.15, alpha = 0.6, color = "#0072B2", size = 2) +
+  geom_point(
+    data = core_point_df,
+    aes(x = n_dwell, y = tail_mass_50 * 100),
+    color = "#D55E00", size = 4.5, shape = 18
+  ) +
+  annotate(
+    "text",
+    x = "0", y = obs_tail_mass_50 * 100,
+    label = "Core 24",
+    hjust = -0.25, vjust = 0.5, fontface = "bold", color = "#D55E00", size = 3.4
+  ) +
+  scale_x_discrete(drop = FALSE) +
+  theme_bw(base_size = 12) +
+  labs(
+    title    = "B. Impact of Included Mode Dwell Counters",
+    subtitle = "Tail mass vs. dwell counter count at fixed d = 24",
+    x        = "Number of Mode Dwell Counters Included (d = 24)",
+    y        = "Upper-Tail Mass (% Score >= 0.50)"
+  )
+
+p_hist_mc | p_dwell_effect
+```
+
+As shown in Panel A, every unconditional random 24-feature combination places only $1.1\%$ to $4.0\%$ of observations in the high-score tail ($\text{Score} \ge 0.50$), whereas our core 24-feature set—the only combination with zero dwell-time counters—reaches $4.97\%$ ($p = 0.0050$). Panel B demonstrates a continuous, monotonic contraction across the entire range: the more dwell-time counters a 24-feature subset includes, the further the high-score tail shrinks, dropping from a median of $4.3\%$ when a single counter is included down to $1.8\%$ when all six are present.
+
+In conclusion, due to the fact that they tend to reduce anomaly scores, dwell-time counters are not included as engineered features. Only weighted derivatives are included for `power` and `energy`.
+          
+
 ### 4.2 Outdoor Environmental Variables
 
-Unlike the abrupt mechanical step-changes of the HVAC equipment, environmental variables (`rh_outdoor` and `t_outdoor`) are expected to have slow, continuous variations over time. This is first quantified over the entire dataset by calculating the lag-1 autocorrelation coefficient (expected to be close to 1) and the standard deviation ratio, $\sigma_{\Delta} / \sigma_{\text{raw}}$, which compares the standard deviation of the 15-minute step changes to that of the raw variable (expected to be small compared to 1).
+Unlike the abrupt mechanical step-changes of the HVAC equipment, outdoor environmental variables (`rh_outdoor` and `t_outdoor`) vary slowly and continuously over time. We confirm this smoothness across the dataset by checking two standard metrics: the lag-1 autocorrelation (which remains close to 1 for smooth series) and the ratio of standard deviations of step changes and raw values (which remains small for smooth series).
 
 ```{r}
 #| label: smoothness-quantification
@@ -1370,29 +1795,39 @@ hvac_valid |>
   print()
 ```
 
-The results confirm the continuous nature of these environmental features: both variables yield large autocorrelations (>0.99) and small standard deviation ratios (<0.14). 
+The results confirm the continuous nature of these environmental features: both variables yield high autocorrelations (>0.99) and low step-to-raw variation ratios (<0.14).
 
 ```{r}
-#| label: fig-outdoor-environment
+#| label: prep-outdoor-environment
 #| warning: false
 #| message: false
-#| echo: false
-#| fig-width: 10
-#| fig-height: 8
-#| fig-cap: "Distributions of raw values and 15-minute derivatives for outdoor relative humidity (left) and temperature (right). The narrow distributions of the derivatives highlight the slow, continuous nature of environmental shifts."
+#| echo: true
+#| code-summary: "Data Preparation: Outdoor Weather"
 
 library(dplyr)
-library(ggplot2)
-library(patchwork)
 
-# Calculate derivatives
+# Calculate 15-minute step changes
 outdoor_features <- hvac_valid |>
   arrange(timestamp) |>
   select(timestamp, rh_outdoor, t_outdoor) |>
   mutate(
     rh_15m_diff = rh_outdoor - lag(rh_outdoor, n = 1),
-    t_15m_diff = t_outdoor - lag(t_outdoor, n = 1)
+    t_15m_diff  = t_outdoor - lag(t_outdoor, n = 1)
   )
+```
+
+```{r}
+#| label: fig-outdoor-environment
+#| warning: false
+#| message: false
+#| code-summary: "Plot Code"
+#| echo: false
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Distributions of raw values and 15-minute changes for outdoor relative humidity (left) and temperature (right). The narrow distributions of the changes highlight the slow, continuous nature of environmental shifts."
+
+library(ggplot2)
+library(patchwork)
 
 # --- 1. RH Plots (Left Column) ---
 p_rh_raw <- ggplot(outdoor_features, aes(x = rh_outdoor)) +
@@ -1403,7 +1838,7 @@ p_rh_raw <- ggplot(outdoor_features, aes(x = rh_outdoor)) +
 p_rh_diff <- ggplot(outdoor_features, aes(x = rh_15m_diff)) +
   geom_histogram(bins = 100, fill = "#440154", color = "black", linewidth = 0.1) +
   theme_bw(base_size = 12) +
-  labs(title = "15-Min Derivative (\u0394 15m)", x = "\u0394 RH (%)", y = "Count")
+  labs(title = "15-Minute Step Change", x = "\u0394 RH (%)", y = "Count")
 
 # --- 2. Temp Plots (Right Column) ---
 p_t_raw <- ggplot(outdoor_features, aes(x = t_outdoor)) +
@@ -1414,57 +1849,72 @@ p_t_raw <- ggplot(outdoor_features, aes(x = t_outdoor)) +
 p_t_diff <- ggplot(outdoor_features, aes(x = t_15m_diff)) +
   geom_histogram(bins = 100, fill = "#c22b38", color = "black", linewidth = 0.1) +
   theme_bw(base_size = 12) +
-  labs(title = "15-Min Derivative (\u0394 15m)", x = "\u0394 Temperature (\u00B0C)", y = "Count")
+  labs(title = "15-Minute Step Change", x = "\u0394 Temperature (\u00B0C)", y = "Count")
 
 # --- 3. Combine with Patchwork ---
 (p_rh_raw | p_t_raw) / (p_rh_diff | p_t_diff) +
   plot_annotation(
-    title = "Environmental Dynamics: Outdoor Weather Sensors",
+    title = "Outdoor Weather Sensors",
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
   )
 ```
 
-In agreement with the above results, the bottom panels of @fig-outdoor-environment show that the 15-minute first derivatives ($\Delta_{15m}$) for both temperature and humidity are tightly clustered around zero. This suggests that 15-minutes derivative might serve as a good feature for anomaly isolation: they allow the Isolation Forest to easily separate routine weather fluctuations from both sensor malfunctions (e.g., instantaneous $\pm50\%$ humidity dropouts) and severe meteorological events (e.g., sudden temperature plunges during storms).
+As shown in the bottom panels of @fig-outdoor-environment, the 15-minute changes for both temperature and humidity are tightly clustered around zero. This narrow baseline makes the 15-minute step change an effective feature for anomaly detection, allowing the Isolation Forest to easily spot unusual weather events (such as sudden temperature drops during storms) or sensor errors (such as abrupt humidity dropouts).
 
-`d_rh_outdoor(t) = rh_outdoor(t) - rh_outdoor(t-1)`<br>
-`d_t_outdoor(t) = t_outdoor(t) - t_outdoor(t-1)`
+$$\begin{aligned}
+\text{d\_rh\_outdoor}(t) &= \text{rh\_outdoor}(t) - \text{rh\_outdoor}(t-1) \\
+\text{d\_t\_outdoor}(t) &= \text{t\_outdoor}(t) - \text{t\_outdoor}(t-1)
+\end{aligned}$$
+
 
 ### 4.3 Indoor Return Temperature (`t_return`)
 
 To explore the behavior of `t_return`, we first examine its raw distribution alongside its 15-minute and 1-hour temporal derivatives.
 
 ```{r}
-#| label: fig-t-return-histograms
+#| label: prep-t-return-histograms
 #| warning: false
 #| message: false
-#| echo: false
-#| fig-width: 8
-#| fig-height: 8
-#| fig-cap: "Distributions of raw values and temporal derivatives for return temperature across the full dataset."
+#| echo: true
+#| code-summary: "Data Preparation: Return Temperature Derivatives"
 
 library(dplyr)
 library(tidyr)
-library(ggplot2)
 
 t_return_eda <- hvac_valid |>
   arrange(timestamp) |>
   select(timestamp, t_return) |>
   mutate(
     t_ret_15m_diff = t_return - lag(t_return, n = 1),
-    t_ret_1h_diff = t_return - lag(t_return, n = 4)
+    t_ret_1h_diff  = t_return - lag(t_return, n = 4)
   )
 
 t_ret_long <- t_return_eda |>
   pivot_longer(
-    cols = c(t_return, t_ret_15m_diff, t_ret_1h_diff), 
-    names_to = "metric", 
+    cols      = c(t_return, t_ret_15m_diff, t_ret_1h_diff),
+    names_to  = "metric",
     values_to = "value"
   ) |>
   mutate(
-    metric = factor(metric, 
-                    levels = c("t_return", "t_ret_15m_diff", "t_ret_1h_diff"),
-                    labels = c("Raw t_return (\u00B0C)", "15-Minute Derivative (\u0394 15m)", "1-Hour Derivative (\u0394 1h)"))
+    metric = factor(
+      metric,
+      levels = c("t_return", "t_ret_15m_diff", "t_ret_1h_diff"),
+      labels = c("Raw t_return (\u00B0C)", "15-Minute Derivative (\u0394 15m)", "1-Hour Derivative (\u0394 1h)")
+    )
   )
+```
+
+```{r}
+#| label: fig-t-return-histograms
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Distributions of raw values and temporal derivatives for return temperature across the full dataset."
+
+library(ggplot2)
 
 ggplot(t_ret_long, aes(x = value)) +
   geom_histogram(bins = 100, fill = "#c22b38", color = "black", linewidth = 0.1, alpha = 0.8) +
@@ -1477,28 +1927,25 @@ ggplot(t_ret_long, aes(x = value)) +
   )
 ```
 
-Unlike for outdoor environmental variables [@fig-outdoor-environment], the distribution of `t_return` is smooth and continuous, lacking coarse sensor discretization. In addition, the extended tails of the 1-hour derivative compared to the tight 15-minute derivative suggest that temperature changes compound over time. This hints at the presence of prolonged, continuous periods of active heating or cooling. To quantify the durations of these continuous phases, we apply Run Length Encoding (RLE). We classify 15-minute intervals with a derivative $> 0.05^\circ\text{C}$ as heating and $< -0.05^\circ\text{C}$ as cooling, calculating the total consecutive time spent in each state.
+Unlike outdoor environmental variables, the distribution of `t_return` is smooth and continuous, lacking coarse sensor discretization. In addition, the extended tails of the 1-hour derivative compared to the tight 15-minute derivative suggest that temperature changes compound over time. This hints at the presence of prolonged, continuous periods of active heating or cooling. To quantify the durations of these continuous phases, we apply Run Length Encoding (RLE). We classify 15-minute intervals with a derivative $> 0.05^\circ\text{C}$ as *heating* and $< -0.05^\circ\text{C}$ as *cooling*, and calculate the total consecutive time spent in each state.
 
 ```{r}
-#| label: fig-t-return-run-histograms
+#| label: prep-t-return-run-histograms
 #| warning: false
 #| message: false
-#| echo: false
-#| fig-width: 8
-#| fig-height: 8
-#| fig-cap: "Histogram of continuous heating and cooling durations, calculated using Run Length Encoding on the sign of the 15-minute derivative."
+#| echo: true
+#| code-summary: "Data Preparation: Return Temperature RLE Durations"
 
 library(dplyr)
-library(ggplot2)
 
 t_return_runs <- hvac_valid |>
   arrange(timestamp) |>
   mutate(
     t_ret_15m_diff = t_return - lag(t_return),
     diff_sign = case_when(
-      t_ret_15m_diff > 0.05 ~ "Heating (Increasing)",
+      t_ret_15m_diff > 0.05  ~ "Heating (Increasing)",
       t_ret_15m_diff < -0.05 ~ "Cooling (Decreasing)",
-      TRUE ~ "Stable"
+      TRUE                   ~ "Stable"
     )
   ) |>
   filter(!is.na(diff_sign))
@@ -1506,8 +1953,7 @@ t_return_runs <- hvac_valid |>
 runs <- rle(t_return_runs$diff_sign)
 
 run_df <- data.frame(
-  state = runs$values,
-  length_15m_intervals = runs$lengths
+  state                = runs$values, length_15m_intervals = runs$lengths
 ) |>
   filter(state != "Stable") |>
   mutate(duration_hours = length_15m_intervals * 0.25)
@@ -1519,6 +1965,19 @@ anno_df <- run_df |>
     .groups = "drop"
   ) |>
   mutate(label = paste0("Max Duration:\n", max_hrs, " hours"))
+```
+
+```{r}
+#| label: fig-t-return-run-histograms
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Histogram of continuous heating and cooling durations, calculated using Run Length Encoding on the sign of the 15-minute derivative."
+
+library(ggplot2)
 
 ggplot(run_df, aes(x = duration_hours, fill = state)) +
   geom_histogram(binwidth = 0.25, boundary = 0, color = "black", alpha = 0.8) +
@@ -1543,38 +2002,36 @@ ggplot(run_df, aes(x = duration_hours, fill = state)) +
 
 @fig-t-return-run-histograms shows that continuous operational states can persist for nearly 6 hours.
 
-In order for the Isolation Forests to recognize anomalous cooling and heating prolonged events, we explicitly incorporate them with the following tow engineered features.
+To help the Isolation Forest recognize anomalous prolonged cooling and heating events, we incorporate two engineered features:
 
-- **Signed Duration (`t_ret_run_length`)**: An integer counter of how many consecutive intervals the system has been moving in the current direction (positive for heating, negative for cooling). This represents time spent in a continuous state.
-- **Cumulative Displacement (t_ret_displacement)**: The total temperature change since the current continuous run began. This captures the intensity of the state, separating passive environmental drift (long duration, low displacement) from active mechanical forcing (long duration, high displacement).
+* **Signed Duration (`t_ret_run_length`)**: An integer counter of how many consecutive intervals the system has been moving in the current direction (positive for heating, negative for cooling). This represents time spent in a continuous state.
+* **Cumulative Displacement (`t_ret_displacement`)**: The total temperature change since the current continuous run began. This captures the intensity of the state, separating passive environmental drift (long duration, low displacement) from active mechanical forcing (long duration, high displacement).
 
-These features are explicitly defined as
+These features are defined as:
 
-$$
-\begin{aligned}
+$$\begin{aligned}
 \Delta \text{t\_return}_{15m}(t) &= \text{t\_return}(t) - \text{t\_return}(t-1) \\
 \text{t\_ret\_run\_length}(t) &= k \times \text{direction} \\
 \text{t\_ret\_displacement}(t) &= \sum_{i=0}^{k-1} \Delta \text{t\_return}_{15m}(t-i)
-\end{aligned}
-$$
-Where $k$ represents the number of consecutive 15-minute intervals in the current thermodynamic `direction` (-1 for cooling and +1 for heating).
+\end{aligned}$$
+
+where $k$ represents the number of consecutive 15-minute intervals in the current thermal `direction` (-1 for cooling and +1 for heating).
 
 
 ### 4.4 System Error, Thermal Effort, and Thermal Kinematics (`sp_return` & `t_supply`)
 
 The variables `sp_return` (programmed setpoint) and `t_supply` (air exiting the mechanical unit) are final key controls of the HVAC loop. Their independent values do not directly convey the system's performance. For instance, a raw `t_supply` of $22^\circ\text{C}$ represents active heating if the room is $18^\circ\text{C}$, but represents active cooling if the room is $26^\circ\text{C}$.
 
-To provide the Isolation Forest with a better geometric manifold of the system's physical state, we engineer these relationships into two gaps:
+To provide the Isolation Forest with a better geometric manifold of the system's physical state, we engineer these relationships into two temperature gaps:
 
 ```{r}
-#| label: fig-system-gaps
+#| label: prep-system-gaps
 #| warning: false
 #| message: false
-#| echo: false
-#| fig-cap: "Distributions of the Control Error (top) and Supply Delta (bottom). The Supply Delta captures the operational states: idling (the central spike at zero), active cooling (the left tail), active heating (the right mound), and extreme mechanical anomalies (the distant outliers)."
+#| echo: true
+#| code-summary: "Data Preparation: Control Error and Supply Delta"
 
 library(dplyr)
-library(ggplot2)
 library(tidyr)
 
 gaps_eda <- hvac_valid |>
@@ -1582,22 +2039,39 @@ gaps_eda <- hvac_valid |>
   select(timestamp, t_return, sp_return, t_supply) |>
   mutate(
     control_error = t_return - sp_return,
-    supply_delta = t_supply - t_return
+    supply_delta  = t_supply - t_return
   ) |>
   filter(!is.na(control_error) & !is.na(supply_delta))
 
 gaps_long <- gaps_eda |>
   pivot_longer(
-    cols = c(control_error, supply_delta), 
-    names_to = "metric", 
+    cols      = c(control_error, supply_delta),
+    names_to  = "metric",
     values_to = "value"
   ) |>
   mutate(
-    metric = factor(metric, 
-                    levels = c("control_error", "supply_delta"),
-                    labels = c("Control Error (t_return - sp_return)", 
-                               "Supply Delta (t_supply - t_return)"))
+    metric = factor(
+      metric,
+      levels = c("control_error", "supply_delta"),
+      labels = c(
+        "Control Error (t_return - sp_return)",
+        "Supply Delta (t_supply - t_return)"
+      )
+    )
   )
+```
+
+```{r}
+#| label: fig-system-gaps
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Distributions of the Control Error (top) and Supply Delta (bottom). The Supply Delta captures the operational states: idling (the central spike at zero), active cooling (the left tail), active heating (the right mound), and extreme mechanical anomalies (the distant outliers)."
+
+library(ggplot2)
 
 ggplot(gaps_long, aes(x = value, fill = metric)) +
   geom_histogram(bins = 150, color = "black", alpha = 0.8, linewidth = 0.1) +
@@ -1612,29 +2086,28 @@ ggplot(gaps_long, aes(x = value, fill = metric)) +
   )
 ```
 
-- **Control Error (`control_error`)**: The difference between the actual room state and the programmed target. @fig-system-gaps (top) shows a broad, negatively skewed distribution. Large deviations in this feature allow the algorithm to isolate moments where the system is failing to keep up with the environmental load.
-- **Thermal Effort (`supply_delta`)**: The $\Delta T$ across the room. @fig-system-gaps (bottom) cleanly separates the system's operational phases, isolating extreme mechanical effort (the distant outliers) from standard idling or active cycles.
+* **Control Error (`control_error`)**: The difference between the actual room state and the programmed target: 't_return' - 'sp_return'. As shown in @fig-system-gaps (top), this yields a broad, negatively skewed distribution. Large deviations in this feature allow the algorithm to isolate moments where the system is failing to keep up with the environmental load.
+* **Thermal Effort (`supply_delta`)**: The temperature difference ($\Delta T$) across the room: `t_supply - t_return`. As shown in @fig-system-gaps (bottom), this cleanly separates the system's operational phases, isolating extreme mechanical effort (distant outliers) from standard idling or active cycles.
 
-Next, as we did with `t_return`, we explore the duration of active and cooling periods as now defined with `t_supply`.
+Next, as we did with `t_return`, we explore the durations of active heating and cooling periods as defined by `t_supply`.
 
 ```{r}
-#| label: fig-t-supply-run-histograms
+#| label: prep-t-supply-run-histograms
 #| warning: false
 #| message: false
-#| echo: false
-#| fig-cap: "Histogram of continuous heating and cooling durations for supply air."
+#| echo: true
+#| code-summary: "Data Preparation: Supply Temperature RLE Durations"
 
 library(dplyr)
-library(ggplot2)
 
 supply_runs <- hvac_valid |>
   arrange(timestamp) |>
   mutate(
     t_sup_15m_diff = t_supply - lag(t_supply),
     diff_sign = case_when(
-      t_sup_15m_diff > 0.05 ~ "Heating (Increasing)",
+      t_sup_15m_diff > 0.05  ~ "Heating (Increasing)",
       t_sup_15m_diff < -0.05 ~ "Cooling (Decreasing)",
-      TRUE ~ "Stable"
+      TRUE                   ~ "Stable"
     )
   ) |>
   filter(!is.na(diff_sign))
@@ -1642,8 +2115,7 @@ supply_runs <- hvac_valid |>
 runs <- rle(supply_runs$diff_sign)
 
 run_df <- data.frame(
-  state = runs$values,
-  length_15m_intervals = runs$lengths
+  state                = runs$values, length_15m_intervals = runs$lengths
 ) |>
   filter(state != "Stable") |>
   mutate(duration_hours = length_15m_intervals * 0.25)
@@ -1655,13 +2127,26 @@ anno_df <- run_df |>
     .groups = "drop"
   ) |>
   mutate(label = paste0("Max Duration:\n", max_hrs, " hours"))
+```
+
+```{r}
+#| label: fig-t-supply-run-histograms
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 8
+#| fig-height: 8
+#| fig-cap: "Histogram of continuous heating and cooling durations for supply air."
+
+library(ggplot2)
 
 ggplot(run_df, aes(x = duration_hours, fill = state)) +
   geom_histogram(binwidth = 0.25, boundary = 0, color = "black", alpha = 0.8) +
   facet_wrap(~state, ncol = 1, scales = "free_y") +
   geom_text(
     data = anno_df,
-    aes(x = Inf, y = Inf, label = label), 
+    aes(x = Inf, y = Inf, label = label),
     inherit.aes = FALSE,
     hjust = 1.2, vjust = 1.5, fontface = "bold", size = 4, color = "grey30"
   ) +
@@ -1676,38 +2161,39 @@ ggplot(run_df, aes(x = duration_hours, fill = state)) +
   )
 ```
 
-(@fig-t-supply-run-histograms) shows that mechanical modulation phases can persist for up to 6 hours. To equip the Isolation Forest to detect these periods we perform a similar encoding to the one for `t_return`:
+@fig-t-supply-run-histograms shows that modulation phases can persist for up to 6 hours. To equip the Isolation Forest to detect these prolonged periods, we incorporate the following features:
 
-$$
-\begin{aligned}
+$$\begin{aligned}
 \text{control\_error}(t) &= \text{t\_return}(t) - \text{sp\_return}(t) \\
 \text{supply\_delta}(t) &= \text{t\_supply}(t) - \text{t\_return}(t) \\
 \Delta \text{t\_supply}_{15m}(t) &= \text{t\_supply}(t) - \text{t\_supply}(t-1) \\
 \text{t\_sup\_run\_length}(t) &= j \times \text{direction} \\
 \text{t\_sup\_displacement}(t) &= \sum_{i=0}^{j-1} \Delta \text{t\_supply}_{15m}(t-i)
-\end{aligned}
-$$
-Where $j$ represents the number of consecutive 15-minute intervals moving in the same thermodynamic direction.
+\end{aligned}$$
+
+where $j$ represents the number of consecutive 15-minute intervals moving in the same thermodynamic direction.
+
 
 ### 4.5 Humidity and Condensation (`rh_return`, `rh_supply` & `t_saturation`)
 
-Variables `rh_return`, `rh_supply`, and `t_saturation` monitor and control the moisture state of the HVAC system. Relative humidity and saturation temperature are inherently coupled to air temperature. 
+Variables `rh_return`, `rh_supply`, and `t_saturation` monitor and control the moisture state of the HVAC system. Relative humidity and saturation temperature are inherently coupled to air temperature.
 
-To map these relationships, we engineer three differences:
+To map these relationships, we engineer three primary differences:
 
-$$\begin{aligned} \text{humidity\_delta}(t) &= \text{rh\_supply}(t) - \text{rh\_return}(t) \\ \text{supply\_margin}(t) &= \text{t\_supply}(t) - \text{t\_saturation}(t) \\ \text{return\_margin}(t) &= \text{t\_return}(t) - \text{t\_saturation}(t) \end{aligned}$$
+$$\begin{aligned}
+\text{humidity\_delta}(t) &= \text{rh\_supply}(t) - \text{rh\_return}(t) \\
+\text{supply\_margin}(t) &= \text{t\_supply}(t) - \text{t\_saturation}(t) \\
+\text{return\_margin}(t) &= \text{t\_return}(t) - \text{t\_saturation}(t)
+\end{aligned}$$
 
 ```{r}
-#| label: fig-moisture-gaps
+#| label: prep-moisture-gaps
 #| warning: false
 #| message: false
 #| echo: true
-#| fig-width: 8
-#| fig-height: 10
-#| fig-cap: "Distributions of the engineered moisture gaps: Humidity Delta, Supply Margin, and Return Margin."
+#| code-summary: "Data Preparation: Moisture Gaps and Saturation Margins"
 
 library(dplyr)
-library(ggplot2)
 library(tidyr)
 
 moisture_gaps_eda <- hvac_valid |>
@@ -1715,24 +2201,41 @@ moisture_gaps_eda <- hvac_valid |>
   select(timestamp, rh_return, rh_supply, t_supply, t_return, t_saturation) |>
   mutate(
     humidity_delta = rh_supply - rh_return,
-    supply_margin = t_supply - t_saturation,
-    return_margin = t_return - t_saturation
+    supply_margin  = t_supply - t_saturation,
+    return_margin  = t_return - t_saturation
   ) |>
   filter(!is.na(humidity_delta) & !is.na(supply_margin) & !is.na(return_margin))
 
 moisture_long <- moisture_gaps_eda |>
   pivot_longer(
-    cols = c(humidity_delta, supply_margin, return_margin), 
-    names_to = "metric", 
+    cols      = c(humidity_delta, supply_margin, return_margin),
+    names_to  = "metric",
     values_to = "value"
   ) |>
   mutate(
-    metric = factor(metric, 
-                    levels = c("humidity_delta", "supply_margin", "return_margin"),
-                    labels = c("Humidity Delta (rh_supply - rh_return) [%]", 
-                               "Supply Margin (t_supply - t_saturation) [\u00B0C]",
-                               "Return Margin (t_return - t_saturation) [\u00B0C]"))
+    metric = factor(
+      metric,
+      levels = c("humidity_delta", "supply_margin", "return_margin"),
+      labels = c(
+        "Humidity Delta (rh_supply - rh_return) [%]",
+        "Supply Margin (t_supply - t_saturation) [\u00B0C]",
+        "Return Margin (t_return - t_saturation) [\u00B0C]"
+      )
+    )
   )
+```
+
+```{r}
+#| label: fig-moisture-gaps
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 8
+#| fig-height: 10
+#| fig-cap: "Distributions of the engineered moisture gaps: Humidity Delta, Supply Margin, and Return Margin."
+
+library(ggplot2)
 
 ggplot(moisture_long, aes(x = value, fill = metric)) +
   geom_histogram(bins = 150, color = "black", alpha = 0.8, linewidth = 0.1) +
@@ -1740,39 +2243,32 @@ ggplot(moisture_long, aes(x = value, fill = metric)) +
   scale_fill_manual(values = c("#0868ac", "#7bccc4", "#43a2ca")) +
   theme_bw(base_size = 12) +
   labs(
-    title = "EDA: Moisture Gaps and Saturation Margins",
+    title    = "Moisture Gaps and Saturation Margins",
     subtitle = "Distributions of engineered humidity and saturation relationships",
-    x = "Difference",
-    y = "Frequency"
+    x        = "Difference",
+    y        = "Frequency"
   ) +
   theme(
-    legend.position = "none",
+    legend.position  = "none",
     strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
-    strip.text = element_text(face = "bold")
+    strip.text       = element_text(face = "bold")
   )
 ```
 
-As shown in @fig-moisture-gaps, the Humidity Delta maintains a broadly positive distribution, potentially reflecting an average trend towards active humidification.
+As shown in @fig-moisture-gaps, the Humidity Delta maintains a broadly positive distribution, reflecting an average trend toward active humidification during winter operations. The Supply Margin reveals multiple distinct operational clusters, notably including a probability mass dropping into negative territory. The Return Margin exhibits both negative and positive components, though its distribution is less complex than that of the Supply Margin.
 
-The Supply Margin reveals multiple distinct operational clusters and notably includes a probability mass that drops into negative territory. 
+Providing the Isolation Forest with these engineered features allows it to map different moisture regimes to geometric manifolds for anomaly detection.
 
-The Return Margin also has both negative and positive components, but the distribution is less complex than that of the Supply Margin.
-
-Providing the Isolation Forest with the above engineered features should allow it to map different moisture regimes to geometric manifolds then used for anomaly detection.
-
-To determine if these moisture boundaries shift instantaneously or drift over time, we apply the same Run Length Encoding (RLE) methodology previously established for the temperature variables. 
+To determine if these moisture boundaries shift instantaneously or drift over time, we apply the same Run Length Encoding (RLE) methodology previously established for temperature.
 
 ```{r}
-#| label: fig-moisture-gaps-rle
+#| label: prep-moisture-gaps-rle
 #| warning: false
 #| message: false
 #| echo: true
-#| fig-width: 10
-#| fig-height: 8
-#| fig-cap: "Histograms of consecutive continuous ramping durations for the engineered moisture gaps."
+#| code-summary: "Data Preparation: Moisture Gaps RLE Durations"
 
 library(dplyr)
-library(ggplot2)
 library(tidyr)
 
 # 1. Calculate the gaps and their 15m differences
@@ -1780,11 +2276,11 @@ moisture_rle_data <- hvac_valid |>
   arrange(timestamp) |>
   mutate(
     humidity_delta = rh_supply - rh_return,
-    supply_margin = t_supply - t_saturation,
-    return_margin = t_return - t_saturation
+    supply_margin  = t_supply - t_saturation,
+    return_margin  = t_return - t_saturation
   ) |>
   mutate(
-    hum_delta_diff = humidity_delta - lag(humidity_delta),
+    hum_delta_diff  = humidity_delta - lag(humidity_delta),
     sup_margin_diff = supply_margin - lag(supply_margin),
     ret_margin_diff = return_margin - lag(return_margin)
   ) |>
@@ -1793,29 +2289,34 @@ moisture_rle_data <- hvac_valid |>
 # 2. Helper function to compute RLE for a given vector
 compute_rle <- function(diff_vec, threshold, var_name) {
   directions <- case_when(
-    diff_vec > threshold ~ "Increasing",
+    diff_vec > threshold  ~ "Increasing",
     diff_vec < -threshold ~ "Decreasing",
-    TRUE ~ "Stable"
+    TRUE                  ~ "Stable"
   )
   
   runs <- rle(directions)
   
   data.frame(
-    variable = var_name,
-    state = runs$values, length_15m = runs$lengths
+    variable   = var_name,
+    state      = runs$values, length_15m = runs$lengths
   ) |>
     filter(state != "Stable") |>
     mutate(duration_hours = length_15m * 0.25)
 }
 
 # 3. Apply RLE to each gap
-rle_hum <- compute_rle(moisture_rle_data$hum_delta_diff, threshold = 0.1, "Humidity Delta (%)")
+rle_hum <- compute_rle(moisture_rle_data$hum_delta_diff,  threshold = 0.1,  "Humidity Delta (%)")
 rle_sup <- compute_rle(moisture_rle_data$sup_margin_diff, threshold = 0.05, "Supply Margin (\u00B0C)")
 rle_ret <- compute_rle(moisture_rle_data$ret_margin_diff, threshold = 0.05, "Return Margin (\u00B0C)")
 
 # Combine into one dataframe
 all_runs <- bind_rows(rle_hum, rle_sup, rle_ret) |>
-  mutate(variable = factor(variable, levels = c("Humidity Delta (%)", "Supply Margin (\u00B0C)", "Return Margin (\u00B0C)")))
+  mutate(
+    variable = factor(
+      variable,
+      levels = c("Humidity Delta (%)", "Supply Margin (\u00B0C)", "Return Margin (\u00B0C)")
+    )
+  )
 
 # 4. Compute maximum durations for text annotations
 anno_df <- all_runs |>
@@ -1825,14 +2326,26 @@ anno_df <- all_runs |>
     .groups = "drop"
   ) |>
   mutate(label = paste0("Max:\n", max_hrs, " h"))
+```
 
-# 5. Plot the histograms on a grid
+```{r}
+#| label: fig-moisture-gaps-rle
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Plot Code"
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Histograms of consecutive continuous ramping durations for the engineered moisture gaps."
+
+library(ggplot2)
+
 ggplot(all_runs, aes(x = duration_hours, fill = state)) +
   geom_histogram(binwidth = 0.25, boundary = 0, color = "black", alpha = 0.8) +
   facet_grid(variable ~ state, scales = "free_y") +
   geom_text(
     data = anno_df,
-    aes(x = Inf, y = Inf, label = label), 
+    aes(x = Inf, y = Inf, label = label),
     inherit.aes = FALSE,
     hjust = 1.2, vjust = 1.5, fontface = "bold", size = 3.5, color = "grey30"
   ) +
@@ -1840,60 +2353,54 @@ ggplot(all_runs, aes(x = duration_hours, fill = state)) +
   scale_x_continuous(breaks = seq(0, 15, by = 1)) +
   theme_bw(base_size = 12) +
   labs(
-    title = "EDA: Continuous Ramping Durations for Moisture Gaps",
+    title    = "EDA: Continuous Ramping Durations for Moisture Gaps",
     subtitle = "Histograms of consecutive increasing/decreasing trajectories",
-    x = "Continuous Duration (Hours)",
-    y = "Count of Occurrences"
+    x        = "Continuous Duration (Hours)",
+    y        = "Count of Occurrences"
   ) +
   theme(
-    legend.position = "none",
+    legend.position  = "none",
     strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
-    strip.text = element_text(face = "bold")
+    strip.text       = element_text(face = "bold")
   )
 ```
 
-As demonstrated in @fig-moisture-gaps-rle, while the majority of shifts resolve rapidly, the system also undergoes continuous moisture ramps stretching across several hours. Incorporating the temporal history of these margins is likely essential to describe the HVAC system functioning. This history is encoded as was done before with the temperature gaps: signed duration (run length) and cumulative displacement.
+As demonstrated in @fig-moisture-gaps-rle, while the majority of shifts resolve rapidly, the system also undergoes continuous moisture ramps stretching across several hours. Incorporating the temporal history of these margins is essential to fully characterize HVAC performance. This history is encoded via signed duration (run length) and cumulative displacement:
 
-Let $x \in \{ \text{humidity\_delta, supply\_margin, return\_margin} \}$ represent a given moisture gap, and $j$ represent the number of consecutive 15-minute intervals moving in the same continuous direction. The complete set of engineered features mapping the system's moisture state is defined as:
+$$\begin{aligned}
+\text{humidity\_delta}(t) &= \text{rh\_supply}(t) - \text{rh\_return}(t) \\
+\text{supply\_margin}(t) &= \text{t\_supply}(t) - \text{t\_saturation}(t) \\
+\text{return\_margin}(t) &= \text{t\_return}(t) - \text{t\_saturation}(t)
+\end{aligned}$$
 
-$$
-\begin{aligned} 
-\text{humidity\_delta}(t) &= \text{rh\_supply}(t) - \text{rh\_return}(t) \\ 
-\text{supply\_margin}(t) &= \text{t\_supply}(t) - \text{t\_saturation}(t) \\ 
-\text{return\_margin}(t) &= \text{t\_return}(t) - \text{t\_saturation}(t) 
-\end{aligned}
-$$
+$$\begin{aligned}
+\Delta x_{15m}(t) &= x(t) - x(t-1) \\
+\text{run\_length}_x(t) &= j \times \text{direction} \\
+\text{displacement}_x(t) &= \sum_{i=0}^{j-1} \Delta x_{15m}(t-i)
+\end{aligned}$$
 
-$$
-\begin{aligned} 
-\Delta x_{15m}(t) &= x(t) - x(t-1) \\ 
-\text{run\_length}_x(t) &= j \times \text{direction} \\ 
-\text{displacement}_x(t) &= \sum_{i=0}^{j-1} \Delta x_{15m}(t-i) 
-\end{aligned}
-$$
+where $x \in \{ \text{humidity\_delta, supply\_margin, return\_margin} \}$ represents a given moisture gap, and $j$ represents the number of consecutive 15-minute intervals moving in the same continuous direction.
 
 ### 4.6 Summary of Engineered Features
-
 
 The feature engineering phase transforms the raw sensor logs into a 24-dimensional geometric manifold. The complete feature set is summarized in the table below using standard mathematical notation.
 
 | Category | Engineered Feature | Mathematical Definition |
 | :--- | :--- | :--- |
-| **Power & Energy** | `dw_power(t)`<br>`dw_energy(t)` | $\text{power(t)} \times (\text{power}(t) - \text{power}(t-1))$<br>$\text{energy}(t) \times (\text{energy}(t) - \text{energy}(t-1))$ |
-| **Outdoor Environment** | `d_rh_outdoor(t)`<br>`d_t_outdoor(t)` | $\text{rh\_outdoor}(t) - \text{rh\_outdoor}(t-1)$<br>$\text{t\_outdoor}(t) - \text{t\_outdoor}(t-1)$ |
-| **Indoor Return Temp** | `d_t_return_15m(t)`<br>`t_ret_run_length(t)`<br>`t_ret_displacement(t)` | $\text{t\_return}(t) - \text{t\_return}(t-1)$<br>$k \times \text{direction}$<br>$\sum_{i=0}^{k-1} \Delta \text{t\_return}_{15m}(t-i)$ |
-| **System Error & Thermal Effort** | `control_error(t)`<br>`supply_delta(t)`<br>`d_t_supply_15m(t)`<br>`t_sup_run_length(t)`<br>`t_sup_displacement(t)` | $\text{t\_return}(t) - \text{sp\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_supply}(t-1)$<br>$j \times \text{direction}$<br>$\sum_{i=0}^{j-1} \Delta \text{t\_supply}_{15m}(t-i)$ |
-| **Moisture Gaps** | `humidity_delta(t)`<br>`supply_margin(t)`<br>`return_margin(t)` | $\text{rh\_supply}(t) - \text{rh\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_saturation}(t)$<br>$\text{t\_return}(t) - \text{t\_saturation}(t)$ |
-| **Moisture Kinematics** <br>*(Where $x$ is each of the 3 moisture gaps)* | `d_x_15m(t)`<br>`run_length_x(t)`<br>`displacement_x(t)` | $x(t) - x(t-1)$<br>$m \times \text{direction}$<br>$\sum_{i=0}^{m-1} \Delta x_{15m}(t-i)$ |
-
+| **Power & Energy** | `dw_power`<br>`dw_energy` | $\text{power}(t) \times (\text{power}(t) - \text{power}(t-1))$<br>$\text{energy}(t) \times (\text{energy}(t) - \text{energy}(t-1))$ |
+| **Outdoor Environment** | `d_rh_outdoor`<br>`d_t_outdoor` | $\text{rh\_outdoor}(t) - \text{rh\_outdoor}(t-1)$<br>$\text{t\_outdoor}(t) - \text{t\_outdoor}(t-1)$ |
+| **Indoor Return Temp** | `d_t_return_15m`<br>`t_ret_run_length`<br>`t_ret_displacement` | $\text{t\_return}(t) - \text{t\_return}(t-1)$<br>$k \times \text{direction}$<br>$\sum_{i=0}^{k-1} \Delta \text{t\_return}_{15m}(t-i)$ |
+| **System Error & Thermal Effort** | `control_error`<br>`supply_delta`<br>`d_t_supply_15m`<br>`t_sup_run_length`<br>`t_sup_displacement` | $\text{t\_return}(t) - \text{sp\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_supply}(t-1)$<br>$j \times \text{direction}$<br>$\sum_{i=0}^{j-1} \Delta \text{t\_supply}_{15m}(t-i)$ |
+| **Moisture Gaps** | `humidity_delta`<br>`supply_margin`<br>`return_margin` | $\text{rh\_supply}(t) - \text{rh\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_saturation}(t)$<br>$\text{t\_return}(t) - \text{t\_saturation}(t)$ |
+| **Moisture Kinematics** <br>*(Where $x$ is each of the 3 moisture gaps)* | `d_x_15m`<br>`run_length_x`<br>`displacement_x` | $x(t) - x(t-1)$<br>$m \times \text{direction}$<br>$\sum_{i=0}^{m-1} \Delta x_{15m}(t-i)$ |
 
 ## 5 Archetype Extraction with Engineered Features
 
-We now utilize the set of engineered features to extract fault archetypes.
+We now utilize the 24 engineered features to extract fault archetypes.
 
 ### 5.1 Engine Initialization
 
-We initialize the engine, use the engineered-feature YAML configuration, and ingest the time course. To avoid scoring the massive 6-month summer gap as an anomaly, we again split the data into two parts (baseline_telemetry and stream_telemetry), utilizing split index `major_gap_idx` calculated during the [initial data validation step](#data-split-and-validation).
+We initialize the engine with the engineered-feature YAML configuration and ingest the time course. To avoid scoring the 6-month summer gap as an anomaly, we split the data into `baseline_telemetry` and `stream_telemetry` using the `major_gap_idx` index calculated during [initial data validation](#data-split-and-validation).
 
 ```{r}
 #| label: engine-init-and-split
@@ -1906,11 +2413,14 @@ We initialize the engine, use the engineered-feature YAML configuration, and ing
 library(dplyr)
 library(lubridate)
 library(isoRouting)
-library(here)
 
 # 1. Load the package data and configure the engine
 data("hvac_features", package = "isoRouting")
-config_engineered <- here("inst", "extdata", "engineered_features.yaml")
+config_engineered <- system.file(
+  "extdata", "engineered_features.yaml",
+  package = "isoRouting",
+  mustWork = TRUE
+)
 engine_engineered <- new("DiagnosticEngine", config_path = config_engineered)
 engine_engineered <- ingest_time_course(engine_engineered, data = hvac_features)
 
@@ -1928,7 +2438,7 @@ stream_telemetry <- hvac_valid_eng |>
 
 ### 5.2 Isolation Forest Training and Score Distribution
 
-With the continuous baseline (`baseline_telemetry`), we now fit the Isolation Forest model. The model dynamically pulls the ensemble size (500 trees) and sample size (256) from the engineered YAML configuration.
+Next, we fit the Isolation Forest on `baseline_telemetry`. The engine pulls the ensemble size (`ntrees`: 500) and sample size (`sample_size`: 256) from the YAML configuration.
 
 ```{r}
 #| label: fit-engineered-if
@@ -1960,7 +2470,7 @@ baseline_scored <- baseline_telemetry |>
 #| code-summary: "Plot Score Distribution"
 #| warning: false
 #| message: false
-#| fig-cap: "Distribution of Isolation Forest anomaly scores with the engineered features."
+#| fig-cap: "Distribution of Isolation Forest anomaly scores with the 24 engineered features."
 
 library(ggplot2)
 
@@ -1975,11 +2485,11 @@ ggplot(baseline_scored, aes(x = anomaly_score)) +
   )
 ```
 
-As seen in @fig-engineered-if-dist, the majority of standard telemetry is compressed below the anomaly score of 0.5. There are two distinct distribution bumps around 0.52 and 0.65. As was done previously with the naive configuration we next utilize method `evaluate_k_stability` to explore anomaly score thresholds. We do it here by varying the number $N$ of anomalies above the threshold.
+As shown in @fig-engineered-if-dist, most baseline observations fall below an anomaly score of 0.50, and the upper tail exhibits two distinct bumps around 0.52 and 0.65. As done with the naive configuration, we use `evaluate_k_stability` to explore anomaly thresholds by varying the number $N$ of top-scoring observations retained.
 
 ### 5.3 Threshold Diagnostics
 
-We first utilize method `evaluate_k_stability` to retrieve the diagnostics profiles.
+We run `evaluate_k_stability` to compute the diagnostic profiles across candidate anomaly thresholds.
 
 ```{r}
 #| label: engineered-evaluate-stability
@@ -1999,13 +2509,13 @@ stability_curve_engineered <- evaluate_k_stability(
 )
 ```
 
-We then plot the profiles with the [previously defined wrapper](#stability-ggplot-target).
+We then plot the profiles using the [previously defined wrapper](#stability-ggplot-target).
 
 ```{r}
 #| label: fig-engineered-evaluate-stability
 #| echo: true
-#| code-summary: "Plot Diagnostics Profile"
-#| fig-cap: "Diagnositic scores across anomaly thresholds (800 < N < 20)."
+#| code-summary: "Plot Code"
+#| fig-cap: "Diagnostic scores across anomaly thresholds (20 <= N <= 800)."
 #| fig-height: 12
 #| fig-width: 9
 #| warning: false
@@ -2015,15 +2525,15 @@ We then plot the profiles with the [previously defined wrapper](#stability-ggplo
 fig_engineered <- plot_topological_stability(
   stability_curve_engineered,
   plot_title = "Anomaly Threshold Diagnostics with Engineered Features",
-  plot_subtitle = "Optimal cluster number (k), distance heterogeneity (D), and variable dependencies breaks (LID)."
+  plot_subtitle = "Optimal cluster number (k), distance heterogeneity (D), and variable dependency breaks (LID)."
 )
 
 print(fig_engineered)
 ```
 
-@fig-engineered-evaluate-stability shows that distance heterogeneity between anomalies (D) is maximum between thresholds 0.59 and 0.61. In this interval, uncoupling between variables (LID) remains high, before following an overall decreasing trend. 
+@fig-engineered-evaluate-stability shows that distance heterogeneity ($D$) peaks between thresholds $0.59$ and $0.61$. Within this interval, Local Intrinsic Dimensionality (LID) remains elevated before beginning an overall decline.
 
-Such as we did with the naive configuration we also check that values of $D$ and LID are significantly different than one would expect by sampling timestamps (points) independently of their anomaly scores.
+As done with the naive configuration, we verify that the observed $D$ and LID values differ from random expectations by sampling sets of $N$ observations independently of their anomaly scores.
 
 ```{r}
 #| label: engineered-null-preparation
@@ -2043,12 +2553,12 @@ dip_control_engineered <- simulate_dip_control(engine_baseline, N = n_sequence, 
 #| label: fig-engineered-control-dip
 #| eval: true
 #| echo: true
-#| code-summary: "Plot Engineered Control: Hartigan's D"
+#| code-summary: "Plot Code"
 #| message: false
 #| warning: false
 #| fig-width: 10
 #| fig-height: 5
-#| fig-cap: "Simulated Control Bounds for Hartigan's D applied to the engineered feature matrix."
+#| fig-cap: "Simulated control bounds for Hartigan's D applied to the engineered feature matrix."
 
 fig_dip_null_eng <- plot_baseline_profile(
   dip_control_engineered,
@@ -2064,12 +2574,12 @@ print(fig_dip_null_eng)
 #| label: fig-engineered-control-lid
 #| eval: true
 #| echo: true
-#| code-summary: "Plot Engineered Control: LID"
+#| code-summary: "Plot Code"
 #| message: false
 #| warning: false
 #| fig-width: 10
 #| fig-height: 5
-#| fig-cap: "Simulated Control Bounds for LID applied to the engineered feature matrix."
+#| fig-cap: "Simulated control bounds for LID applied to the engineered feature matrix."
 
 fig_lid_null_eng <- plot_baseline_profile(
   lid_control_engineered,
@@ -2081,15 +2591,15 @@ fig_lid_null_eng <- plot_baseline_profile(
 print(fig_lid_null_eng)
 ```
 
-In the actual engineered diagnostics, Hartigan's $D$ hits a prominent peak of approximately $0.045$ as the anomaly threshold approaches $T = 0.60$. The control simulation shows that at equivalent thresholds, the expected background heterogeneity (the 95th percentile) remains below $0.02$. The observed multimodality in the actual data is therefore a likely physical separation of anomaly states.   
+In the engineered diagnostic profile (@fig-engineered-evaluate-stability), Hartigan's $D$ reaches approximately $0.045$ near $T = 0.60$, whereas the 95th percentile of the null control (@fig-engineered-control-dip) remains below $0.02$. This confirms that the observed multimodality reflects distinct anomaly states rather than an artifact of applying Hartigan's $D$ to pairwise distances.
 
-The Local Intrinsic Dimensionality (LID) control also provides a confirmation. The control baseline fluctuates between $20$ and $22$ dimensions, with an absolute minimum bound around $15$. However, in the actual diagnostic profile, the anomaly manifold experiences a dimensional decrease at $T = 0.60$: from roughly $10.5$ down to $8$. 
+The LID control (@fig-engineered-control-lid) provides similar confirmation: random subsets fluctuate between $20$ and $22$ dimensions (with a lower bound near $15$), whereas the anomaly subset drops from roughly $10.5$ to $8$ dimensions at $T = 0.60$.
 
-Therefore, we choose to explore the anomalies at threshold T = 0.6.
+Based on both diagnostics, we select $T = 0.60$ as the anomaly threshold.
 
-### 5.4 Medoids Extraction
+### 5.4 Medoid Extraction
 
-We now extract the medoids (representatives of clustered anomalies) at T = 0.6.
+We now extract the cluster medoids (representative anomalies) at $T = 0.60$.
 
 ```{r}
 #| label: extract-engineered-medoids
@@ -2105,19 +2615,19 @@ engine_baseline <- extract_medoids(engine_baseline, threshold = 0.6)
 # 2. Retrieve the extracted physical archetypes (medoids)
 medoids_df <- get_medoids(engine_baseline)
 
-# 3. Print the mathematically calibrated k-value
-cat("Mathematically Calibrated k at threshold = 0.6:", engine_baseline@optimal_k, "\n")
+# 3. Print the calibrated k-value
+cat("Calibrated k at threshold = 0.6:", engine_baseline@optimal_k, "\n")
 ```
 
-As shown above, the optimal number of clusters (maximum global silhouette score) is k = 4 at T = 0.6. 
+At $T = 0.60$, maximizing the global silhouette score yields $k = 4$ clusters.
 
-We next display the time course of the extracted medoids utilizing the [previously defined wrapper](#medoids-ggplot-target) and visualizing only the `context_variables` defined in the YAML configuration.
+Next, we plot the trajectories of the four medoids using the [previously defined wrapper](#medoids-ggplot-target), displaying the `context_variables` specified in the YAML configuration.
 
 ```{r}
 #| label: fig-engineered-comprehensive-medoids
 #| echo: true
-#| code-summary: "Plot Archetype Trajectories"
-#| fig-cap: "Time-course of the extracted 4 anomaly archetypes at T = 0.6."
+#| code-summary: "Plot Code"
+#| fig-cap: "Time course of the four anomaly archetypes extracted at T = 0.60."
 #| fig-height: 14
 #| fig-width: 10
 #| warning: false
@@ -2139,20 +2649,20 @@ fig_medoids_comprehensive <- plot_medoid_trajectories(
 print(fig_medoids_comprehensive)
 ```
 
-@fig-engineered-comprehensive-medoids is described as follows.
+@fig-engineered-comprehensive-medoids reveals four distinct signatures:
 
-- **Archetype 1:** Characterized by a dip in supply temperature and a simultaneous spike in supply relative humidity at $t=0$. Return variables, outdoor variables, and the return setpoint remain stable. Power and energy show no deviation. This profile indicates a brief, unpowered humidity disturbance, which disrupts the supply air moisture without engaging the unit's power.   
-- **Archetype 2:** Likely represents a commanded system startup. At $t=0$, both power and energy exhibit a large, sustained step-up from near zero. This is instantly coupled with a rise in both supply and return temperatures. Consequently, the supply and return relative humidity drop, reflecting heating air without adding moisture. The return setpoint and outdoor variables remain constant.   
-- **Archetype 3:** Defines a thermal anomaly. The supply temperature undergoes a large, upward spike at $t=0$ and remains elevated. This temperature surge drives down the supply relative humidity. However, unlike Archetype 2, power and energy remain flat and near zero. This decoupling of thermal output from electrical input suggests an external mechanical failure.   
-- **Archetype 4:** Represents a hard system shutdown or loss of power. The electrical power and energy drop instantaneously to zero. As a result, the supply and return temperatures begin a continuous downward decay. Inversely, the supply and return relative humidity climb steadily. The setpoint and outdoor variables remain flat throughout the decay.
+* **Archetype 1:** Characterized by a dip in `t_supply` and a simultaneous spike in `rh_supply` at $t = 0$, while return variables, outdoor conditions, `sp_return`, `power`, and `energy` remain stable. This profile indicates a brief, unpowered moisture disturbance in the supply air.
+* **Archetype 2:** Represents a system startup. At $t = 0$, `power` and `energy` step up sharply from near zero, accompanied by rising `t_supply` and `t_return` and falling `rh_supply` and `rh_return` as the air is heated without added moisture. Setpoint and outdoor variables remain constant.
+* **Archetype 3:** Captures an unpowered thermal surge. At $t = 0$, `t_supply` spikes and remains elevated while `rh_supply` drops, yet `power` and `energy` stay near zero. This decoupling of thermal output from electrical input could reflect an external mechanical fault (such as a leaking heating valve).
+* **Archetype 4:** Represents a system shutdown. At $t = 0$, `power` and `energy` drop to zero, initiating a steady decay in `t_supply` and `t_return` alongside a steady rise in `rh_supply` and `rh_return`, while outdoor conditions and the setpoint remain flat.
 
-In order to facilitate interpretation of the archetypes, `isoRouting` implements Leave One Covariate Out (LOCO) ablation tests in method `ablate_features`. Namely, anomaly scores of the extracted medoids are recomputed after setting one of the `target_variables` to its median value over the entire dataset. This is done for each target variable, and they are then sorted for their contribution to the archetype anomaly score.
+To quantify which features drive each archetype, `isoRouting` implements Leave-One-Covariate-Out (LOCO) ablation via method `ablate_features`. For each medoid, the method replaces one target variable at a time with its global median, recomputes the anomaly score, and ranks features by the resulting score drop.
 
 ```{r}
 #| label: ablation-tests
 #| echo: true
 #| code-fold: show
-#| code-summary: "Ablation Tests"
+#| code-summary: "Run Ablation Tests"
 #| warning: false
 #| message: false
 
@@ -2162,7 +2672,7 @@ ablation_results <- ablate_features(engine_baseline)
 ```{r}
 #| label: ablation-ggplot-function
 #| echo: true
-#| code-summary: "Show Ablation Plot Function"
+#| code-summary: "Define Ablation Plot Wrapper"
 #| message: false
 #| warning: false
 
@@ -2212,17 +2722,13 @@ plot_ablation_importance <- function(ablation_df, top_n = 5, plot_title, plot_su
 #| label: fig-ablation-results
 #| echo: true
 #| code-fold: true
-#| code-summary: "Plot Feature Contribution"
+#| code-summary: "Plot Code"
 #| fig-cap: "Top 5 engineered features driving the anomaly score for each medoid archetype, ranked by LOCO ablation."
 #| fig-height: 8
 #| fig-width: 10
 #| warning: false
 #| message: false
 
-# 1. Run the ablation test directly through the S4 API
-ablation_results <- ablate_features(engine_baseline)
-
-# 2. Generate the plot using the wrapper
 fig_ablation <- plot_ablation_importance(
   ablation_results, 
   top_n = 5,
@@ -2233,22 +2739,22 @@ fig_ablation <- plot_ablation_importance(
 print(fig_ablation)
 ```
 
-The LOCO ablation results explain the behaviors visually identified in the multi-variable trajectories. 
+The LOCO ablation rankings (@fig-ablation-results) confirm the visual trajectory analysis:
 
-*   **Archetype 1:** The top two driving features are exclusively moisture-related (`d_humidity_delta` and `humidity_delta`). The complete absence of power features driving this score confirms the model isolated this state based purely on a transient, unpowered humidity disturbance.
-*   **Archetype 2:** Electrical power (`dw_power`) acts as the primary trigger, followed immediately by thermal and energy derivatives. This validates the visual assessment of a commanded system startup.
-*   **Archetype 3:** The anomaly score is driven by extreme deviations in thermal derivatives and margins (e.g., `d_t_supply_15m`, `d_supply_margin`). Crucially, power features do not appear in the top drivers. This mathematical decoupling confirms an unmetered thermal bleed, verifying that heat is entering the system externally.
-*   **Archetype 4:** Dominated by a combination of collapsing margins (`d_supply_margin`, `displacement_return_margin`) and temperature short-term derivatives. This again suggests a hard system shutdown.
+* **Archetype 1:** Driven primarily by moisture features (`d_humidity_delta_15m` and `humidity_delta`), with no power features among the top contributors, confirming an unpowered moisture disturbance.
+* **Archetype 2:** Led by `dw_power`, followed by thermal and energy step changes, consistent with a system startup.
+* **Archetype 3:** Dominated by thermal step changes and saturation margins (`d_t_supply_15m`, `d_supply_margin_15m`) without power contributions, confirming an unpowered thermal fault.
+* **Archetype 4:** Driven by shifts in saturation margins (`d_supply_margin_15m`, `displacement_return_margin`) and short-term temperature derivatives, matching a system shutdown.
 
 ### 5.5 Forensic Ledger
 
-Once the optimal number of clusters is validated and the medoids are extracted, the next step is to lock in the baseline. The `commit_ledger()` method finalizes this state by mapping every isolated anomaly in the historical data to its closest archetype (medoid) based on the Hamming distance derived from the isolation forest.
+Once the cluster count is calibrated and medoids are extracted, we lock in the baseline using `commit_ledger()`. This method assigns every historical anomaly above the threshold to its nearest medoid based on Isolation Forest tree-assignment Hamming distance.
 
 ```{r}
 #| label: commit-ledger
 #| echo: true
 #| code-fold: show
-#| code-summary: "Show Ledger Commit"
+#| code-summary: "Commit Baseline Ledger"
 #| message: false
 #| warning: false
 
@@ -2257,12 +2763,10 @@ engine_baseline <- commit_ledger(engine_baseline)
 
 # Extract the flat dataframe for analysis
 baseline_ledger <- get_ledger(engine_baseline)
-head(baseline_ledger[,1:4], 10)
+head(baseline_ledger[, 1:4], 10)
 ```
 
-Only the first four columns are displayed above. `cluster_rank` represents the rank of the anomaly distance to the medoid (1 being for the medoid). The ledger also contains all target and context variables for all anomalies that have a score above the chosen threshold. 
-
-This means that we can summarize the obtained clusters by using the ledger, for instance as follows.
+Only the first four columns are shown above. `cluster_rank` orders anomalies by their distance to the cluster medoid (`1` denotes the medoid itself). The ledger also retains all target and context variables for every observation scoring above the threshold, enabling direct cluster summaries:
 
 ```{r}
 #| label: ledger-summary
@@ -2279,25 +2783,25 @@ ledger_summary <- baseline_ledger |>
   group_by(anomaly_cluster) |>
   summarise(
     Total_Occurrences = n(),
-    First_Seen = min(as.Date(timestamp)),
-    Last_Seen = max(as.Date(timestamp)),
-    Median_Score = round(median(anomaly_score), 3),
-    Max_Distance = round(max(topological_distance), 3)
+    First_Seen        = min(as.Date(timestamp)),
+    Last_Seen         = max(as.Date(timestamp)),
+    Median_Score      = round(median(anomaly_score), 3),
+    Max_Distance      = round(max(topological_distance), 3)
   ) |>
   arrange(desc(Total_Occurrences))
 
 kable(ledger_summary, caption = "Summary of historical anomaly archetypes.")
 ```
 
-`Max_Distance` represents the **radius** of the cluster. It measures the forest-based distance between the archetype (medoid, distance = 0) and the furthest point that belongs to that cluster. This concept of radius will be important when assigning sub-threshold points to clusters or qualifying them as belonging to a new category. In particular, this will be used later to potentially flag novel types of anomalies in a dataset. 
+`Max_Distance` defines the **radius** of each cluster—the maximum forest distance between its medoid (`topological_distance = 0`) and its members. Later, we use these cluster radii to route sub-threshold observations and flag novel anomaly types in new data.
 
-For now, we first use the ledger to investigate the archetypes observed at threshold T = 0.6. We start by looking at the cumulative frequency of archetype occurence over time
+First, we examine the cumulative occurrence of each archetype over time at $T = 0.60$.
 
 ```{r}
 #| label: cumulative-faults
 #| echo: true
 #| code-fold: show
-#| code-summary: "Cumulative Occurence of Archetypes"
+#| code-summary: "Data Preparation: Cumulative Archetype Occurrences"
 #| message: false
 #| warning: false
 
@@ -2313,7 +2817,8 @@ cumulative_ledger <- baseline_ledger |>
 ```{r}
 #| label: fig-cumulative-faults
 #| echo: true
-#| code-summary: "Show Plot Code"
+#| code-summary: "Plot Code"
+#| fig-cap: "Cumulative frequency of the four fault archetypes across the baseline period."
 #| message: false
 #| warning: false
 
@@ -2328,33 +2833,32 @@ ggplot(plot_data, aes(x = timestamp, y = cumulative_count, color = anomaly_clust
   scale_color_viridis_d(option = "turbo") +
   theme_bw(base_size = 12) +
   labs(
-    title = "Cumulative Frequency of Fault Archetypes (Baseline Period)",
+    title    = "Cumulative Frequency of Fault Archetypes (Baseline Period)",
     subtitle = "Accelerating curves would indicate progressive mechanical degradation",
-    x = "Timeline",
-    y = "Cumulative Occurrences",
-    color = "Archetype"
+    x        = "Timeline",
+    y        = "Cumulative Occurrences",
+    color    = "Archetype"
   ) +
   theme(
-    legend.position = "bottom",
+    legend.position  = "bottom",
     panel.grid.minor = element_blank()
   )
 ```
 
-The rationale for this plot is to detect the potential presence of a "wear-and-t ear" fault. Indeed, if one archetype represented such physical abrasion, one would expect its cumulative frequency to "curve up" over time (a positive second derivative). @fig-cumulative-faults shows this is not the case here:
+This cumulative profile tests for progressive wear-and-tear faults, which would manifest as upward-curving trajectories (an increasing occurrence rate over time). @fig-cumulative-faults shows no progressive degradation:
 
-- **Cluster 4**: Happened only once in January. It represents a singular event—a hard system shutdown.
-- **Cluster 1**: Appears exclusively during the autumn season, forming a short step that flatlines by December. This points to a temporary stressor, such as humidity or moisture spikes, consistent with its previous characterization.
-- **Cluster 3**: Accumulates mostly during the coldest months. This is consistent with the archetype being characterized by a sudden surge of `t_supply` (an anomaly because not associated with a sudden surge of power).
-- **Cluster 2**: The most frequent fault, and the only one showing a noticeable steepening during the coldest winter months (December through February) before tapering off in the spring.
+* **Cluster 4:** Occurs once in January, consistent with an isolated system shutdown.
+* **Cluster 1:** Appears only during autumn and flatlines by December, pointing to a seasonal moisture disturbance.
+* **Cluster 3:** Accumulates primarily during the coldest winter months, matching its signature of unpowered `t_supply` surges.
+* **Cluster 2:** The most frequent archetype, steepening during peak winter (December through February) before tapering off in spring.
 
-To further explore the constant accumulation of cluster 2 over time, we now plot the occurrences of the archetypes not just by their dates, but also by their time of the day.
-
+To investigate why Cluster 2 accumulates steadily during winter, we plot archetype occurrences by both date and time of day.
 
 ```{r}
 #| label: date-time-scatter
 #| echo: true
 #| code-fold: show
-#| code-summary: "Extract Date and Time"
+#| code-summary: "Data Preparation: Extract Date and Time of Day"
 #| message: false
 #| warning: false
 
@@ -2364,126 +2868,129 @@ library(hms)
 
 scatter_data <- baseline_ledger |>
   mutate(
-    date = as.Date(timestamp),
+    date        = as.Date(timestamp),
     time_of_day = as_hms(timestamp)
   )
-
 ```
 
 ```{r}
 #| label: fig-date-time-scatter
 #| echo: true
-#| code-summary: "Show Plot Code"
+#| code-summary: "Plot Code"
+#| fig-cap: "Occurrence dates and times of day for each fault archetype."
 #| message: false
 #| warning: false
 
 library(ggplot2)
 
 ggplot(scatter_data, aes(x = date, y = time_of_day, color = anomaly_cluster)) +
-  # Map size to distance. Smaller distance = larger point (closer to pure medoid)
+  # Map size to distance. Smaller distance = larger point (closer to medoid)
   geom_point(aes(size = topological_distance), alpha = 0.6) +
   scale_size_continuous(
     trans = "reverse", 
-    range = c(1, 6), # FIXED: Restored ascending range so reverse trans maps 0.0 to size 6
-    name = "Topological Distance\n(Larger = closer to medoid)"
+    range = c(1, 6),
+    name  = "Topological Distance\n(Larger = closer to medoid)"
   ) +
   scale_y_time(breaks = scales::breaks_width("4 hours")) +
   scale_color_viridis_d(option = "turbo", guide = "none") +
   facet_wrap(~anomaly_cluster, ncol = 2) +
   theme_bw(base_size = 12) +
   labs(
-    title = "Dates and Times of Archetypes",
+    title    = "Dates and Times of Archetypes",
     subtitle = "Y-axis isolates time of day; Point size reflects proximity to the medoid",
-    x = "Date",
-    y = "Time of Day"
+    x        = "Date",
+    y        = "Time of Day"
   ) +
   theme(
     strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
-    strip.text = element_text(face = "bold"),
+    strip.text       = element_text(face = "bold"),
     panel.grid.minor = element_blank()
   )
 ```
 
-We can interpret @fig-date-time-scatter as follows.
+@fig-date-time-scatter clarifies the operational context of each cluster:
 
-- **Cluster 2** is a general operational stressor. It only occurs in the early morning, at around 5:00 AM. The fact that it steepens during the deep winter months confirms that this fault represents the thermodynamic strain of bringing a cold building up to temperature. 
-- **Cluster 1** is a cold-start climate vulnerability. Like Cluster 2, it is concentrated in the early morning hours, but it is bounded to the autumn transition. This confirms the hypothesis that it is a humidity anomaly, likely triggered when the morning startup coincides with autumn humidity and dew point swings before the dry winter air takes over.
-- **Cluster 3** is scattered randomly throughout the day—occurring at 7:00 AM, 2:00 PM, and 4:00 PM. This randomness aligns with a static mechanical inefficiency, such as a thermal bleed or a damper leak, which can manifest at any time depending on fluctuating external loads.
-- **Cluster 4** is an isolated event occurring just once in the late afternoon. This reinforces its classification as a hard system shutdown or manual override, disconnected from the automated operational rhythms of the building.
+* **Cluster 2:** Occurs strictly around 5:00 AM. Its winter steepening reflects the morning heating demand required to bring a cold building up to setpoint.
+* **Cluster 1:** Also clusters in the early morning hours, but only during autumn. This aligns with morning startups coinciding with autumn humidity and dew-point swings before drier winter air arrives.
+* **Cluster 3:** Occurs across the day (around 7:00 AM, 2:00 PM, and 4:00 PM). This lack of schedule dependence fits a mechanical issue—such as a leaking heating valve or damper—triggered by varying thermal loads.
+* **Cluster 4:** Appears once in the late afternoon, consistent with an isolated shutdown or manual override outside routine morning transitions.
 
-We next use cluster radii to examine all anomalies.
+Next, we use the cluster radii to examine lower-scoring anomalies.
 
 ### 5.6 Sub-Threshold Anomaly Tracking via Cluster Radii
 
-Analyzing only the observations that exceed $T = 0.60$ focuses on severe manifestations of each fault. However, gradual mechanical wear or early fault precursors could develop below that cutoff. 
-To examine this, we can use the empirical cluster radii (`Max_Distance`) locked in at $T = 0.60$ as filters. The `route_time_course()` method projects the entire scored time course (`get_scored_time_course()`) into the isolation forest's terminal node topology. Any observation whose proportional Hamming distance to a medoid falls within that cluster's radius is assigned to that archetype, regardless of whether its anomaly score is above or below $0.60$. Points falling outside all four radii are labeled as `"Background"`.
+Analyzing only observations above $T = 0.60$ focuses on severe fault manifestations, whereas early precursors or gradual mechanical wear may develop below that cutoff. To track sub-threshold behavior, we use the cluster radii (`Max_Distance`) established at $T = 0.60$ as filters. 
+
+The `route_time_course()` method computes the forest Hamming distance between every observation in the scored time course (`get_scored_time_course()`) and each medoid. Any observation falling within a cluster's radius is assigned to that archetype regardless of its anomaly score, while observations outside all four radii are labeled `"Background"`.
 
 ```{r}
 #| label: routed-timeline
 #| echo: true
 #| code-fold: show
-#| code-summary: "Show Routing"
+#| code-summary: "Route Full Time Course"
 #| message: false
 #| warning: false
 
 library(dplyr)
-library(ggplot2)
-
 
 # Route the full time course using cluster radii
 routed_timeline <- route_time_course(engine_baseline)
 print(table(routed_timeline$archetype_bucket))
+
+# Retain all observations assigned to the fault archetypes
+routed_archetypes <- subset(routed_timeline, archetype_bucket != "Background")
 ```
 
 ```{r}
 #| label: fig-routed-timeline
 #| echo: true
-#| code-summary: "Show Plot Code"
+#| code-summary: "Plot Code"
 #| message: false
 #| warning: false
 #| fig-width: 9
 #| fig-height: 6
-#| fig-cap: "Temporal evolution of anomaly scores for all observations falling within each archetype's topological radius. The red dashed line marks the T = 0.60 threshold; solid black lines and grey shaded bands represent Generalized Additive Model (GAM) smoothers and their 95% confidence intervals."
+#| fig-cap: "Temporal evolution of anomaly scores for all observations falling within each archetype's cluster radius. The red dashed line marks the T = 0.60 threshold; solid black lines and grey bands represent Generalized Additive Model (GAM) smoothers and their 95% confidence intervals."
 
-# Retain all observations topologically assigned to the fault archetypes
-routed_archetypes <- subset(routed_timeline, archetype_bucket != "Background")
+library(ggplot2)
 
 ggplot(routed_archetypes, aes(x = timestamp, y = anomaly_score, color = archetype_bucket)) +
   geom_point(alpha = 0.8, size = 2) +
-  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), 
-              color = "black", linewidth = 1.2) +
+  geom_smooth(
+    method = "gam", formula = y ~ s(x, bs = "cs"), 
+    color = "black", linewidth = 1.2
+  ) +
   geom_hline(yintercept = 0.6, linetype = "dashed", color = "red") +
   facet_wrap(~archetype_bucket, ncol = 2) +
   scale_color_viridis_d(option = "turbo", guide = "none") +
   theme_bw(base_size = 12) +
   labs(
-    title = "Temporal Evolution of Archetype Anomaly Scores",
-    subtitle = "Archetypes bounded by their maximum baseline topological distance (cluster radius)",
-    x = "Timeline",
-    y = "Anomaly Score"
+    title    = "Temporal Evolution of Archetype Anomaly Scores",
+    subtitle = "Archetypes bounded by their maximum baseline forest distance (cluster radius)",
+    x        = "Timeline",
+    y        = "Anomaly Score"
   ) +
   theme(strip.background = element_rect(fill = "#f0f0f0"))
 ```
 
-@fig-routed-timeline displays every observation captured within the radius of each medoid across the baseline period (`"Background"` points are ignored). The red dashed horizontal line marks the $T = 0.60$ medoid extraction cutoff, while the solid black curves and surrounding grey bands represent non-parametric trend lines fitted with a Generalized Additive Model (GAM using cubic regression splines) and their 95% confidence intervals.   
+@fig-routed-timeline plots all baseline observations captured within each medoid's radius (excluding `"Background"` points). The red dashed line marks the $T = 0.60$ extraction cutoff, while the black curves and grey bands show Generalized Additive Model (GAM) cubic regression spline trends and their 95% confidence intervals.
 
-This view summarizes the behavior of the system across both higher and lower score regimes without altering the cluster definitions:
+This view captures system behavior across both high- and low-score regimes without altering the cluster definitions:
 
-- **Effect of a Higher Threshold ($T > 0.60$)**: Inspecting the upper region of the facets ($T > 0.64$) shows that Cluster 1 (which peaks below $0.64$) and Cluster 4 (scored near $0.605$) vanish,  leaving only the extreme tips of Cluster 2 and Cluster 3.   
-- **Cluster 1**: Reveals a tight vertical band of sub-threshold precursors (scores between $0.49$ and $0.60$) occurring during the exact same autumn window as the points above $0.60$, with a flat mean trend around $0.585$.   
-- **Cluster 2**: Follows a smooth seasonal arch. Mild manifestations appear below the threshold ($\sim 0.50 - 0.58$) in November, before the GAM trend crosses $0.60$ in December, plateaus near $0.64$ during the peak winter heating months of January and February, and gradually subsides in the spring. Because the trend line levels off and declines as outdoor temperatures warm rather than accelerating upward, it confirms a seasonal load response rather than progressive mechanical wear.   
-- **Cluster 3**: Shows that most observations sharing this thermal-surge topology actually sit below the $0.60$ threshold. Its GAM trend line remains entirely below $0.60$ across the winter (hovering near $0.55$ and sloping slightly downward to $0.52$ by April), confirming that this inefficiency is not worsening over time.   
-- **Cluster 4**: Because this singleton cluster has a radius of $0$, no sub-threshold observations fall within its boundary, and no trend curve is fitted.   
+* **Effect of a Higher Threshold ($T > 0.60$):** Above $T = 0.64$, Cluster 1 (peaking below $0.64$) and Cluster 4 ($0.605$) disappear, leaving only the extreme tails of Clusters 2 and 3.
+* **Cluster 1:** Exhibits a tight band of sub-threshold precursors (scores between $0.49$ and $0.60$) during the same autumn window as its above-threshold points, with a flat mean trend near $0.585$.
+* **Cluster 2:** Follows a seasonal arch. Mild occurrences ($0.50\text{--}0.58$) appear in November before the GAM trend crosses $0.60$ in December, plateaus near $0.64$ during peak winter heating (January–February), and subsides in spring. Because the trend declines as outdoor temperatures warm, it reflects seasonal heating load rather than progressive wear.
+* **Cluster 3:** Most observations sharing this unpowered thermal-surge signature sit below $0.60$. Its GAM trend remains below the cutoff all winter (drifting from $0.55$ down to $0.52$ by April), confirming that the fault does not worsen over time.
+* **Cluster 4:** Because this singleton cluster has a radius of $0$, no sub-threshold observations fall within its boundary and no trend curve is fitted.
 
 ## 6 Predictive Routing and Novelty Detection on Streaming Telemetry
 
-Once the baseline archetypes and their empirical radii (`@cluster_radii`) are locked inside `engine_baseline`, the `DiagnosticEngine` can transition from historical forensics to online diagnostics without retraining the Isolation Forest or re-running hierarchical clustering.
+Once the baseline archetypes and their cluster radii (`@cluster_radii`) are locked inside `engine_baseline`, the `DiagnosticEngine` can route new observations without retraining the Isolation Forest or re-running hierarchical clustering.
 
-When new observations arrive, the `predict_stream()` method projects them through the frozen baseline forest (`@model`), extracts their terminal leaf-node signatures (`type = "tree_num"`), and computes their proportional Hamming distance to each cached medoid signature (`@baseline_signatures`). Each observation is then classified using a two-dimensional decision boundary combining **topological proximity** and **anomaly score**:
+When new data arrive, `predict_stream()` projects each observation through the frozen baseline forest (`@model`), extracts its terminal leaf-node signature (`type = "tree_num"`), and computes its proportional Hamming distance to each cached medoid signature (`@baseline_signatures`). Each observation is then classified by combining **forest distance** and **anomaly score**:
 
-1. **Known Fault Archetype (`Cluster 1` ... `Cluster k`)**: The observation's Hamming distance to its nearest medoid falls within that cluster's historical radius ($d \le R_c$). The point shares the terminal-node topology of a known fault mode.
-2. **Background (`Background`)**: The observation falls outside the topological radius of all known clusters ($d > R_c$) and its Isolation Forest score remains below the baseline threshold ($S < 0.60$).
-3. **Novel Anomaly (`Novel Anomaly`)**: The observation breaches the anomaly score threshold ($S \ge 0.60$) **and** falls outside the empirical radius of every known medoid ($d > R_c$). This flags an unseen physical failure mode that did not exist during the baseline period.
+1. **Known Fault Archetype (`Cluster 1` ... `Cluster k`):** The observation's Hamming distance to its nearest medoid falls within that cluster's baseline radius ($d \le R_c$).
+2. **Background (`Background`):** The observation falls outside all cluster radii ($d > R_c$) and its anomaly score remains below the baseline threshold ($S < 0.60$).
+3. **Novel Anomaly (`Novel Anomaly`):** The observation exceeds the anomaly score threshold ($S \ge 0.60$) **and** falls outside the radius of every known medoid ($d > R_c$). This flags an unseen fault mode that did not occur during the baseline period.
 
 ### 6.1 Routing the Incoming Stream
 
@@ -2491,1071 +2998,208 @@ When new observations arrive, the `predict_stream()` method projects them throug
 #| label: predict-stream
 #| echo: true
 #| code-fold: show
-#| code-summary: "Routing of New Telemetry"
-#| message: false
-#| warning: false
-
-# Route unseen streaming telemetry using the locked baseline engine
-stream_routed <- predict_stream(engine_baseline, new_data = stream_telemetry)
-```
-
-```{r}
-#| label: tbl-predict-stream
-#| echo: true
-#| code-summary: "Show Summary Table Code"
+#| code-summary: "Data Preparation: Route and Summarize Streaming Telemetry"
 #| message: false
 #| warning: false
 
 library(dplyr)
-library(knitr)
 
-# Lookup vector of empirical cluster radii (returns NA for Background and Novel Anomaly)
+# Route unseen streaming telemetry using the locked baseline engine
+stream_routed <- predict_stream(engine_baseline, new_data = stream_telemetry)
+
+# Lookup vector of baseline cluster radii (returns NA for Background and Novel Anomaly)
 radii_lookup <- engine_baseline@cluster_radii
 
 # Summarize the routed states
 stream_summary <- stream_routed |>
   group_by(predicted_state) |>
   summarise(
-    Occurrences = n(),
-    Median_Score = round(median(anomaly_score, na.rm = TRUE), 3),
-    Max_Score = round(max(anomaly_score, na.rm = TRUE), 3),
+    Occurrences     = n(),
+    Median_Score    = round(median(anomaly_score, na.rm = TRUE), 3),
+    Max_Score       = round(max(anomaly_score, na.rm = TRUE), 3),
     Median_Distance = round(median(distance_to_archetype, na.rm = TRUE), 3),
-    Cluster_Radius = round(unname(radii_lookup[first(predicted_state)]), 3),
-    .groups = "drop"
+    Cluster_Radius  = round(unname(radii_lookup[first(predicted_state)]), 3),
+    .groups         = "drop"
   ) |>
   arrange(desc(Occurrences))
+```
+
+```{r}
+#| label: tbl-predict-stream
+#| echo: true
+#| code-summary: "Table Code"
+#| message: false
+#| warning: false
+
+library(knitr)
 
 kable(
   stream_summary,
-  caption = "Summary of streaming telemetry routed across established archetypes and novelty bounds."
+  caption = "Summary of streaming telemetry routed across baseline archetypes and novelty bounds."
 )
 ```
 
 @tbl-predict-stream summarizes the classification of the $16,634$ post-gap streaming observations:
 
-- **`Background` ($16,451$ occurrences)**: Nearly $98.9\%$ of the incoming stream remains below the $T = 0.60$ anomaly score cutoff (maximum score of $0.599$) and sits far outside the topological radii of the baseline medoids (median Hamming distance of $0.914$).
-- **Known Archetypes (`Cluster 2`, `Cluster 3`, `Cluster 1`)**: A total of $166$ observations fall within the empirical radius ($d \le R_c$) of an established baseline medoid. Consistent with the winter baseline period, `Cluster 2` (morning heating startup strain) dominates with $114$ occurrences, followed by `Cluster 3` (unmetered thermal surge, $49$ occurrences) and `Cluster 1` (autumn moisture disturbance, $3$ occurrences). Because routing is governed by the topological radius rather than a hard score cutoff, `predict_stream()` also captures sub-threshold manifestations of these known faults (such as `Cluster 3` with a median score of $0.549$). `Cluster 4` records zero matches because its baseline singleton radius is $R_4 = 0$.
-- **`Novel Anomaly` ($17$ occurrences)**: Seventeen severe observations exceed the $T = 0.60$ threshold (median score $0.643$, max $0.684$) but fall outside the empirical radius of their closest baseline medoid (median distance $0.746$).
+* **Background** ($16,451$ occurrences): Nearly $98.9\%$ of the incoming stream remains below $T = 0.60$ (maximum score $0.599$) and sits outside the baseline cluster radii (median Hamming distance $0.914$).
+* **Known Archetypes** (`Cluster 2`, `Cluster 3`, `Cluster 1`): A total of $166$ observations fall within the radius ($d \le R_c$) of an established medoid. Consistent with the winter baseline period, `Cluster 2` (morning heating startup) dominates with $114$ occurrences, followed by `Cluster 3` (unpowered thermal surge, $49$ occurrences) and `Cluster 1` (autumn moisture disturbance, $3$ occurrences). Because routing uses cluster radii rather than a score cutoff, `predict_stream()` also captures sub-threshold occurrences of known faults (such as `Cluster 3` with a median score of $0.549$). `Cluster 4` records zero matches because its baseline singleton radius is $R_4 = 0$.
+* **Novel Anomaly** ($17$ occurrences): Seventeen observations exceed $T = 0.60$ (median score $0.643$, maximum $0.684$) while falling outside the radius of every baseline medoid (median distance $0.746$).
 
 ### 6.2 Isolating and Clustering Novel Anomalies
 
-Rather than pooling all historical and streaming anomalies together—which allows high-frequency faults like `Cluster 2` to dominate the distance matrix and wash out smaller clusters—we preserve the locked baseline archetypes and pass `stream_routed` directly to `isolate_novel_anomalies()`. 
+Rather than pooling historical and streaming anomalies together—which allows frequent faults like `Cluster 2` to dominate the distance matrix—we keep the locked baseline archetypes and pass `stream_routed` directly to method `isolate_novel_anomalies()`.
 
-This method branches `engine_baseline` onto the $17$ rejected `Novel Anomaly` observations, computes their pairwise proportional Hamming distances using the frozen baseline forest, calibrates the optimal number of novel sub-clusters via DIANA and Global Silhouette, extracts their $\pm 2$-hour medoid windows, and commits a dedicated forensic ledger.
+This method branches `engine_baseline` onto the $17$ `Novel Anomaly` observations, computes their pairwise Hamming distances using the frozen baseline forest, selects the optimal number of novel sub-clusters via DIANA and global silhouette width, extracts their $\pm 2$-hour medoid windows, and commits a dedicated ledger.
 
 ```{r}
 #| label: isolate-novel-anomalies
 #| echo: true
 #| code-fold: show
-#| code-summary: "Isolate and Sub-Cluster Novel Anomalies"
-#| message: false
-#| warning: false
-
-# Branch a novel DiagnosticEngine onto the 17 Novel Anomaly observations
-engine_novel <- isolate_novel_anomalies(engine_baseline, stream_routed, min_k = 2, max_k = 6)
-
-# Inspect the Global Silhouette calibration profile across k = 2..6
-print(engine_novel@k_metrics)
-```
-
-Evaluating the global silhouette width across $k \in [2, 6]$ identifies a clear structural peak at $k = 4$ ($\text{Global Silhouette} = 0.527$), confirming that the $17$ novel events partition into four coherent sub-clusters. Because `engine_novel` is a standard `DiagnosticEngine` instance, we can summarize its committed ledger using the exact same `get_ledger()` workflow used for the baseline period.
-
-```{r}
-#| label: tbl-novel-subclusters
-#| echo: true
-#| code-summary: "Summarize Novel Forensic Ledger"
+#| code-summary: "Data Preparation: Isolate and Summarize Novel Anomalies"
 #| message: false
 #| warning: false
 
 library(dplyr)
-library(knitr)
 
+# Branch a novel DiagnosticEngine onto the 17 Novel Anomaly observations
+engine_novel <- isolate_novel_anomalies(engine_baseline, stream_routed, min_k = 2, max_k = 6)
+
+# Inspect the global silhouette profile across k = 2..6
+print(engine_novel@k_metrics)
+
+# Extract and summarize the novel forensic ledger
 novel_ledger <- get_ledger(engine_novel)
 
 novel_summary <- novel_ledger |>
   group_by(anomaly_cluster) |>
   summarise(
     Total_Occurrences = n(),
-    First_Seen = min(as.Date(timestamp)),
-    Last_Seen = max(as.Date(timestamp)),
-    Median_Score = round(median(anomaly_score), 3),
-    Max_Distance = round(max(topological_distance), 3),
-    .groups = "drop"
+    First_Seen        = min(as.Date(timestamp)),
+    Last_Seen         = max(as.Date(timestamp)),
+    Median_Score      = round(median(anomaly_score), 3),
+    Max_Distance      = round(max(topological_distance), 3),
+    .groups           = "drop"
   )
+```
+
+Evaluating the global silhouette width across $k \in [2, 6]$ identifies a peak at $k = 4$ ($\text{Global Silhouette} = 0.527$), partitioning the $17$ novel events into four sub-clusters. Because `engine_novel` is a standard `DiagnosticEngine` object, we summarize its ledger using `get_ledger()`.
+
+```{r}
+#| label: tbl-novel-subclusters
+#| echo: true
+#| code-summary: "Table Code"
+#| message: false
+#| warning: false
+
+library(knitr)
 
 kable(
   novel_summary,
-  caption = "Summary of the 17 Novel Anomalies partitioned into k = 4 DIANA sub-clusters (Global Silhouette = 0.527)."
+  caption = "Summary of the 17 novel anomalies partitioned into k = 4 DIANA sub-clusters (Global Silhouette = 0.527)."
 )
 ```
 
-@tbl-novel-subclusters reveals a sharp temporal split across the four novel fault modes:
+@tbl-novel-subclusters shows a clear seasonal split across the four novel sub-clusters:
 
-- **Late-Autumn Modes (`Cluster_1` and `Cluster_2`)**: Both occur exclusively within a five-day window in late November 2020 (`2020-11-23` to `2020-11-27`), accounting for $6$ and $3$ occurrences, respectively.
-- **Late-Winter Modes (`Cluster_3` and `Cluster_4`)**: Both emerge three months later between late February and mid-March 2021 (`2021-02-27` to `2021-03-19`), with $6$ occurrences in `Cluster_3` (median score $0.664$) and $2$ occurrences in `Cluster_4` (`2021-03-13` to `2021-03-17`).
+* **Late-Autumn Modes** (`Cluster_1` and `Cluster_2`): Both occur within a five-day window in late November 2020 (`2020-11-23` to `2020-11-27`), with $6$ and $3$ occurrences, respectively.
+* **Late-Winter Modes** (`Cluster_3` and `Cluster_4`): Both emerge between late February and mid-March 2021 (`2021-02-27` to `2021-03-19`), with $6$ occurrences in `Cluster_3` (median score $0.664$) and $2$ occurrences in `Cluster_4` (`2021-03-13` to `2021-03-17`).
 
-### 6.3 Physical Trajectories and Feature Ablation of Novel Archetypes
+### 6.3 Trajectories and Feature Ablation of Novel Archetypes
 
-Because `engine_novel` stores the extracted $\pm 2$-hour medoid windows and preserves the baseline feature matrix, we can pass it directly to `plot_medoid_trajectories()` and `ablate_features()`.
+Because `engine_novel` stores the extracted $\pm 2$-hour medoid windows and baseline feature matrix, we pass it directly to the previously defined [medoid plotting wrapper](#medoids-ggplot-target).
+
+```{r}
+#| label: prep-novel-medoids-trajectories
+#| echo: true
+#| code-fold: show
+#| code-summary: "Data Preparation: Extract Context Variables for Novel Medoids"
+#| message: false
+#| warning: false
+
+context_vars <- get_features(engine_novel)$context_variables
+```
 
 ```{r}
 #| label: fig-novel-medoids-trajectories
 #| echo: true
-#| code-summary: "Plot Novel Archetype Trajectories"
+#| code-summary: "Plot Code"
 #| message: false
 #| warning: false
 #| fig-height: 14
 #| fig-width: 10
-#| fig-cap: "Multivariate time-course trajectories of the context variables for the four novel anomaly sub-clusters extracted from the streaming telemetry."
-
-context_vars <- get_features(engine_novel)$context_variables
+#| fig-cap: "Time-course trajectories of the context variables for the four novel anomaly sub-clusters extracted from the streaming telemetry."
 
 fig_novel_medoids <- plot_medoid_trajectories(
   engine_novel,
-  plot_title = "Trajectories of the Four Novel Sub-Clusters (Streaming Telemetry)",
+  plot_title    = "Trajectories of the Four Novel Sub-Clusters (Streaming Telemetry)",
   plot_subtitle = "Trajectories of the context variables across +/- 2 hour windows.",
-  label_style = "numeric",
-  vars_to_plot = context_vars
+  label_style   = "numeric",
+  vars_to_plot  = context_vars
 )
 
 print(fig_novel_medoids)
 ```
 
-@fig-novel-medoids-trajectories reveals how the four novel sub-clusters both resemble and depart from the historical baseline archetypes:
+@fig-novel-medoids-trajectories shows how the four novel sub-clusters compare to the baseline archetypes:
 
-- **Novel Archetype 1 ($n = 6$):** Characterized by a transient, one-hour surge in `power` ($0 \to 5\text{ kW}$) and `energy` that mirrors opposing transient deflections in the air temperatures. Unlike a standard heating cycle, `t_supply` dips from $30^\circ\text{C}$ to $24^\circ\text{C}$ (accompanied by a spike in `rh_supply`) while `t_return` rises from $18^\circ\text{C}$ to $21^\circ\text{C}$ before reverting once power drops back to zero.
-- **Novel Archetype 2 ($n = 3$):** Resembles Baseline Archetype 3 in that `t_supply` surges sharply from $17^\circ\text{C}$ to $30^\circ\text{C}$ (driving `rh_supply` down from $45\%$ to $30\%$) while `power` and `energy` remain near their minimum. However, here the surge is sustained and accompanied by post-event oscillations in `t_saturation` ($17^\circ\text{C} - 21^\circ\text{C}$).
-- **Novel Archetypes 3 ($n = 6$) and 4 ($n = 2$):** Both exhibit a sudden, sustained step-up in `power` ($0 \to 5\text{ kW}$) and `energy` at $t = 0$, superficially resembling the commanded startup of Baseline Archetype 2. However, in Baseline Archetype 2, the power surge drove a simultaneous increase in `t_supply` and `t_return`. Here, `t_supply` and `t_saturation` drop at $t = 0$—most sharply in Novel Archetype 3 (`sp_return` $\approx 19.5^\circ\text{C}$, `t_saturation` plunging from $19^\circ\text{C}$ to $14^\circ\text{C}$), and more moderately in Novel Archetype 4 (`sp_return` $\approx 21.5^\circ\text{C}$, accompanied by a pre-event ramp in `rh_return`).
+* **Novel Archetype 1 ($n = 6$):** Exhibits a one-hour surge in `power` ($0 \to 5\text{ kW}$) and `energy` accompanied by opposing temperature shifts. Unlike a normal heating cycle, `t_supply` dips from $30^\circ\text{C}$ to $24^\circ\text{C}$ (with a spike in `rh_supply`) while `t_return` rises from $18^\circ\text{C}$ to $21^\circ\text{C}$ before reverting when power returns to zero.
+* **Novel Archetype 2 ($n = 3$):** Resembles Baseline Archetype 3 in that `t_supply` surges from $17^\circ\text{C}$ to $30^\circ\text{C}$ (driving `rh_supply` down from $45\%$ to $30\%$) while `power` and `energy` remain near zero. Here, however, the surge is sustained and followed by oscillations in `t_saturation` ($17^\circ\text{C}\text{--}21^\circ\text{C}$).
+* **Novel Archetypes 3 ($n = 6$) and 4 ($n = 2$):** Both show a sustained step-up in `power` ($0 \to 5\text{ kW}$) and `energy` at $t = 0$, similar to Baseline Archetype 2. However, whereas Baseline Archetype 2 drove simultaneous increases in `t_supply` and `t_return`, here `t_supply` and `t_saturation` drop at $t = 0$—sharply in Novel Archetype 3 (`sp_return` $\approx 19.5^\circ\text{C}$, with `t_saturation` falling from $19^\circ\text{C}$ to $14^\circ\text{C}$) and more moderately in Novel Archetype 4 (`sp_return` $\approx 21.5^\circ\text{C}$, preceded by a ramp in `rh_return`).
 
-To pinpoint the exact engineered features that separate these four novel fault modes—and particularly to distinguish Novel Archetype 3 from Novel Archetype 4—we run `ablate_features()` on `engine_novel`.
+To identify the engineered features separating these four novel fault modes—particularly Novel Archetypes 3 and 4—we run `ablate_features()` on `engine_novel`.
+
+```{r}
+#| label: prep-novel-ablation
+#| echo: true
+#| code-fold: show
+#| code-summary: "Run LOCO Ablation on Novel Medoids"
+#| message: false
+#| warning: false
+
+novel_ablation_results <- ablate_features(engine_novel)
+```
 
 ```{r}
 #| label: fig-novel-ablation
 #| echo: true
-#| code-summary: "Run LOCO Ablation on Novel Medoids"
+#| code-summary: "Plot Code"
 #| message: false
 #| warning: false
 #| fig-height: 8
 #| fig-width: 10
-#| fig-cap: "Top 5 engineered features driving the anomaly score for each of the four novel sub-cluster medoids, ranked by LOCO ablation."
-
-novel_ablation_results <- ablate_features(engine_novel)
+#| fig-cap: "Top 5 engineered features driving the anomaly score for each novel sub-cluster medoid, ranked by LOCO ablation."
 
 fig_novel_ablation <- plot_ablation_importance(
   novel_ablation_results,
-  top_n = 5,
-  plot_title = "Novel Sub-Cluster Interpretation via Feature Ablation",
+  top_n         = 5,
+  plot_title    = "Novel Sub-Cluster Interpretation via Feature Ablation",
   plot_subtitle = "Decrease in anomaly score when feature is reverted to its baseline median"
 )
 
 print(fig_novel_ablation)
 ```
 
-The LOCO ablation results in @fig-novel-ablation clarify the mathematical distinction behind each novel sub-cluster:
+The LOCO ablation results (@fig-novel-ablation) clarify the feature drivers behind each novel sub-cluster:
 
-- **Novel Cluster 1:** Driven by rapid shifts in return temperature (`d_t_return_15m`) and humidity (`d_humidity_delta_15m`) coupled directly with electrical power and energy (`dw_power`, `dw_energy`). Whereas Baseline Archetype 1 was a purely unpowered moisture disturbance, this novel state couples a moisture and return-air transient directly to a temporary power pulse.
-- **Novel Cluster 2:** Contains no electrical power or energy features in its top five drivers. Unlike Baseline Archetype 3—which was driven by instantaneous 15-minute thermal derivatives—Novel Cluster 2 is dominated by cumulative multi-step displacements (`displacement_supply_margin`, `t_sup_displacement`, `displacement_humidity_delta`), capturing the sustained thermal ramp and saturation instability.
-- **Novel Cluster 3 vs. Novel Cluster 4:** While both are triggered primarily by `dw_power` (and include `dw_energy`), their secondary drivers explain why DIANA partitioned them into distinct sub-clusters:
-  - **Novel Cluster 3** is a pure **return-saturation margin event**: ranks 2, 3, and 4 consist entirely of `d_return_margin_15m`, `displacement_return_margin`, and `return_margin`, reflecting the abrupt $5^\circ\text{C}$ drop in `t_saturation` relative to `t_return` upon startup.
-  - **Novel Cluster 4** is driven by **humidity-delta kinematics** (`d_humidity_delta_15m` at rank 2 and `run_length_humidity_delta` at rank 5) alongside `d_return_margin_15m` (rank 3), reflecting the sustained two-hour climb in `rh_return` ($18\% \to 27\%$) relative to `rh_supply` leading up to the power surge.
+* **Novel Cluster 1:** Driven by rapid changes in return temperature (`d_t_return_15m`) and humidity (`d_humidity_delta_15m`) coupled with power and energy (`dw_power`, `dw_energy`). Whereas Baseline Archetype 1 was an unpowered moisture disturbance, this fault pairs a moisture and return-air transient with a brief power pulse.
+* **Novel Cluster 2:** Contains no power or energy features among its top five drivers. Unlike Baseline Archetype 3—which was driven by 15-minute thermal step changes—Novel Cluster 2 is dominated by cumulative multi-step displacements (`displacement_supply_margin`, `t_sup_displacement`, `displacement_humidity_delta`), capturing the sustained thermal ramp and saturation instability.
+* **Novel Cluster 3 vs. Novel Cluster 4:** Although both are led by `dw_power` (and include `dw_energy`), their secondary drivers explain why DIANA separates them:
+  * **Novel Cluster 3** is driven by **return-saturation margins**: ranks 2, 3, and 4 consist of `d_return_margin_15m`, `displacement_return_margin`, and `return_margin`, reflecting the $5^\circ\text{C}$ drop in `t_saturation` relative to `t_return` at startup.
+  * **Novel Cluster 4** is driven by **humidity-delta kinematics** (`d_humidity_delta_15m` at rank 2 and `run_length_humidity_delta` at rank 5) alongside `d_return_margin_15m` (rank 3), capturing the two-hour climb in `rh_return` ($18\% \to 27\%$) relative to `rh_supply` prior to the power surge.
 
-```{r}
-knitr::knit_exit()
-```
+Combining the trajectory profiles (@fig-novel-medoids-trajectories) with the LOCO feature rankings (@fig-novel-ablation) suggests the following physical interpretations for the four novel fault modes:
 
+- **Novel Cluster 1 (Economizer or Outdoor-Air Damper Transient):** A one-hour `power` pulse occurs alongside a drop in `t_supply` ($30^\circ\text{C} \to 24^\circ\text{C}$) and a rise in `t_return` ($18^\circ\text{C} \to 21^\circ\text{C}$). This pattern might represent an economizer or outdoor-air damper opening in response to rising indoor return temperatures (`d_t_return_15m`), drawing in cooler, more humid autumn air (`d_humidity_delta_15m`) while the supply fan powers up to flush the zone.
+- **Novel Cluster 2 (Sustained Heating Valve Leak):** Whereas Baseline Archetype 3 captured brief unpowered thermal spikes, Novel Cluster 2 could reflect a heating coil valve stuck partially open over multiple hours. In this scenario, hot water continues to heat the supply air (`t_sup_displacement`, `displacement_supply_margin`) while electrical `power` remains off, triggering downstream oscillations in `t_saturation`.
+- **Novel Cluster 3 (Mechanical Cooling or Defrost Engagement):** A sharp `power` step-up is paired with an immediate drop in both `t_supply` and `t_saturation` ($19^\circ\text{C} \to 14^\circ\text{C}$) at a lower return setpoint (`sp_return` $\approx 19.5^\circ\text{C}$). Rather than a winter heating startup (Baseline Archetype 2), this could reflect compressor-driven cooling or a heat-pump defrost cycle that rapidly chills the coil below the return-air temperature (`d_return_margin_15m`, `displacement_return_margin`).
+- **Novel Cluster 4 (Latent Occupancy Load / Dehumidification Startup):** Preceded by a steady two-hour climb in `rh_return` ($18\% \to 27\%$) at a higher setpoint (`sp_return` $\approx 21.5^\circ\text{C}$), the unit powers on (`dw_power`), likely to address accumulated indoor moisture (`d_humidity_delta_15m`, `run_length_humidity_delta`), producing a milder drop in `t_supply` and `t_saturation` as moisture condenses across the coil.
 
+## 7 Summary
 
-```{r}
-#| label: fig-stream-mds
-#| echo: true
-#| code-summary: "Show Rank-MDS Plot Code"
-#| message: false
-#| warning: false
-#| fig-width: 8
-#| fig-height: 6
-#| fig-cap: "Two-dimensional Rank-MDS projection of routed streaming detections and baseline medoids. Pairwise proportional Hamming distances are rank-normalized prior to classical scaling to reduce squared-distance distortion. Large diamonds indicate locked baseline medoids; circles represent streaming observations sized by anomaly score."
+As illustrated in this vignette, `isoRouting` provides a structured S4 framework for unsupervised time-series fault discovery, archetype extraction, and online stream routing. 
 
-library(ggplot2)
-
-stream_pts <- subset(mds_df, Point_Type == "Stream Detection")
-medoid_pts <- subset(mds_df, Point_Type == "Baseline Medoid")
-
-ggplot() +
-  # Plot streaming detections
-  geom_point(
-    data = stream_pts,
-    aes(x = MDS1, y = MDS2, color = State, size = Anomaly_Score),
-    alpha = 0.75
-  ) +
-  # Overlay Baseline Medoids as prominent anchor markers
-  geom_point(
-    data = medoid_pts,
-    aes(x = MDS1, y = MDS2, fill = State),
-    shape = 23, size = 5, color = "black", stroke = 1.2
-  ) +
-  scale_color_viridis_d(option = "turbo", limits = all_states, drop = FALSE, name = "Predicted State") +
-  scale_fill_viridis_d(option = "turbo", limits = all_states, drop = FALSE, guide = "none") +
-  scale_size_continuous(range = c(1.5, 4.5), name = "Anomaly Score") +
-  theme_bw(base_size = 12) +
-  labs(
-    title = "2D Topological Map of Routed Streaming Detections (Rank-MDS)",
-    subtitle = "Diamonds = Locked Baseline Medoids; Circles = Streaming Observations",
-    x = "Rank-MDS Dimension 1",
-    y = "Rank-MDS Dimension 2"
-  ) +
-  theme(
-    legend.position = "bottom",
-    legend.box = "vertical",
-    panel.grid.minor = element_blank()
-  )
-```
-
-
-
-```{r}
-#| label: novel-subcluster-summary
-#| echo: true
-#| code-fold: show
-#| code-summary: "Summarize the k = 4 Novel Sub-Clusters"
-#| message: false
-#| warning: false
-
-library(dplyr)
-library(knitr)
-
-# Cut the DIANA tree of novel anomalies at the optimal k = 4
-novel_subclusters <- paste0("Novel_", stats::cutree(novel_tree, k = 4))
-
-# Attach sub-cluster labels to the 17 novel stream rows
-novel_details <- active_stream[novel_idx, ] |>
-  mutate(
-    Novel_Subcluster = novel_subclusters,
-    Nearest_Baseline_Radius = round(unname(engine_baseline@cluster_radii[closest_archetype]), 3)
-  ) |>
-  group_by(Novel_Subcluster, closest_archetype) |>
-  summarise(
-    Occurrences = n(),
-    First_Seen = min(as.Date(timestamp)),
-    Last_Seen = max(as.Date(timestamp)),
-    Median_Score = round(median(anomaly_score), 3),
-    Median_Dist_to_Baseline = round(median(distance_to_archetype), 3),
-    Baseline_Radius = first(Nearest_Baseline_Radius),
-    .groups = "drop"
-  )
-
-kable(
-  novel_details,
-  caption = "Breakdown of the 17 Novel Anomalies into k = 4 DIANA sub-clusters (Global Silhouette = 0.527)."
-)
-```
-
-
-```{r}
-#| label: fig-stream-mds-subclusters
-#| echo: true
-#| code-summary: "Show Rank-MDS Plot with Novel Sub-Clusters"
-#| message: false
-#| warning: false
-#| fig-width: 8.5
-#| fig-height: 6.5
-#| fig-cap: "Two-dimensional Rank-MDS projection of routed streaming detections, baseline medoids (diamonds), and the four DIANA sub-clusters identified within the Novel Anomaly rejection set."
-
-library(ggplot2)
-
-# Create a fine-grained label that splits "Novel Anomaly" into its 4 DIANA sub-clusters
-detailed_state <- active_stream$predicted_state
-detailed_state[novel_idx] <- novel_subclusters
-
-mds_df$Detailed_State <- c(rownames(medoid_sigs), detailed_state)
-
-stream_pts <- subset(mds_df, Point_Type == "Stream Detection")
-medoid_pts <- subset(mds_df, Point_Type == "Baseline Medoid")
-novel_pts  <- subset(stream_pts, State == "Novel Anomaly")
-known_pts  <- subset(stream_pts, State != "Novel Anomaly")
-
-ggplot() +
-  # 1. Known routed archetypes (circles)
-  geom_point(
-    data = known_pts,
-    aes(x = MDS1, y = MDS2, color = State, size = Anomaly_Score),
-    alpha = 0.65
-  ) +
-  # 2. Novel sub-clusters (distinct shapes with black outlines)
-  geom_point(
-    data = novel_pts,
-    aes(x = MDS1, y = MDS2, shape = Detailed_State, size = Anomaly_Score),
-    color = "#7A0403", fill = "#7A0403", alpha = 0.9, stroke = 1
-  ) +
-  # 3. Baseline Medoids (diamonds)
-  geom_point(
-    data = medoid_pts,
-    aes(x = MDS1, y = MDS2, fill = State),
-    shape = 23, size = 5, color = "black", stroke = 1.2
-  ) +
-  scale_color_viridis_d(option = "turbo", limits = all_states, drop = FALSE, name = "Baseline State") +
-  scale_fill_viridis_d(option = "turbo", limits = all_states, drop = FALSE, guide = "none") +
-  scale_shape_manual(
-    values = c("Novel_1" = 15, "Novel_2" = 17, "Novel_3" = 18, "Novel_4" = 8),
-    name = "Novel Sub-Cluster"
-  ) +
-  scale_size_continuous(range = c(1.5, 4.5), name = "Anomaly Score") +
-  theme_bw(base_size = 12) +
-  labs(
-    title = "2D Topological Map of Routed Detections and Novel Sub-Clusters",
-    subtitle = "Diamonds = Baseline Medoids; Circles = Routed Stream; Dark Red Shapes = k=4 Novel Sub-Clusters",
-    x = "Rank-MDS Dimension 1",
-    y = "Rank-MDS Dimension 2"
-  ) +
-  theme(
-    legend.position = "bottom",
-    legend.box = "vertical",
-    panel.grid.minor = element_blank()
-  )
-```
-
-```{r}
-#| label: pooled-high-score-clustering
-#| echo: true
-#| code-fold: show
-#| code-summary: "Pool All High-Score Points and Evaluate Silhouette"
-#| message: false
-#| warning: false
-
-library(dplyr)
-library(cluster)
-
-# 1. Extract all baseline anomalies at T = 0.60
-base_anom_idx <- which(engine_baseline@scored_time_course$anomaly_score >= 0.60)
-
-# 2. Extract all stream anomalies at T = 0.60
-stream_anom_idx <- which(stream_routed$anomaly_score >= 0.60)
-
-# Combine features for all pooled high-score points
-targets <- engine_baseline@feature_schema$target_variables
-pooled_features <- rbind(
-  engine_baseline@raw_time_course[base_anom_idx, targets, drop = FALSE],
-  stream_telemetry[stream_anom_idx, targets, drop = FALSE]
-)
-
-# 3. Compute terminal node signatures and pooled Hamming distance matrix
-pooled_sigs <- stats::predict(engine_baseline@model, pooled_features, type = "tree_num")
-t_pooled <- t(pooled_sigs)
-n_trees <- nrow(t_pooled)
-n_pooled <- ncol(t_pooled)
-
-message(sprintf("Computing proportional Hamming distance matrix for %d pooled high-score observations...", n_pooled))
-
-pooled_dist_mat <- vapply(
-  seq_len(n_pooled),
-  function(i) colSums(t_pooled != t_pooled[, i]) / n_trees,
-  numeric(n_pooled)
-)
-dimnames(pooled_dist_mat) <- NULL
-
-# 4. Build DIANA hierarchical tree on the pooled distance matrix
-pooled_tree <- stats::as.hclust(cluster::diana(stats::as.dist(pooled_dist_mat)))
-
-# 5. Sweep k from 2 to 10 and record Global Silhouette width
-pooled_sil_results <- data.frame(k = 2:10, Global_Silhouette = NA_real_)
-
-for (i in seq_along(pooled_sil_results$k)) {
-  k_val <- pooled_sil_results$k[i]
-  lbls <- stats::cutree(pooled_tree, k = k_val)
-  
-  # Calculate average silhouette width
-  sil_obj <- cluster::silhouette(lbls, dmatrix = pooled_dist_mat)
-  pooled_sil_results$Global_Silhouette[i] <- mean(sil_obj[, "sil_width"])
-}
-
-print(pooled_sil_results)
-
-# Identify the optimal k maximizing global silhouette
-optimal_pooled_k <- pooled_sil_results$k[which.max(pooled_sil_results$Global_Silhouette)]
-cat(sprintf("\nOptimal k for pooled high-score anomalies: %d\n", optimal_pooled_k))
-```
-
-```{r}
-#| label: fig-decision-space2
-#| echo: true
-#| code-summary: "Show Topological Decision Space Plot Code"
-#| message: false
-#| warning: false
-#| fig-width: 9.5
-#| fig-height: 6.5
-#| fig-cap: "Topological decision space across the four baseline archetypes. Vertical dashed lines mark empirical cluster radii (R_c); horizontal dashed lines mark the anomaly score threshold (T = 0.60). Points in the upper-right quadrant (d > R_c and Score >= 0.60) are rejected as Novel Anomalies and partitioned into k = 4 DIANA sub-clusters."
-
-library(ggplot2)
-library(dplyr)
-
-# Build reference dataframe of baseline radii for each facet
-radii_df <- data.frame(
-  closest_archetype = names(engine_baseline@cluster_radii),
-  Cluster_Radius = unname(engine_baseline@cluster_radii),
-  stringsAsFactors = FALSE
-)
-
-# Attach the k = 4 Novel Sub-Cluster labels to the full routed stream
-stream_plot_df <- stream_routed
-stream_plot_df$Plot_Group <- stream_plot_df$predicted_state
-
-# Map the 17 novel observations to Novel_1 ... Novel_4
-full_novel_idx <- which(stream_plot_df$predicted_state == "Novel Anomaly")
-stream_plot_df$Plot_Group[full_novel_idx] <- novel_subclusters
-
-# Separate background, known archetypes, and novel sub-clusters for layered plotting
-bg_pts    <- subset(stream_plot_df, Plot_Group == "Background")
-known_pts <- subset(stream_plot_df, Plot_Group %in% paste("Cluster", 1:4))
-novel_pts <- subset(stream_plot_df, grepl("^Novel_", Plot_Group))
-
-ggplot() +
-  # 1. Background points (light grey context)
-  geom_point(
-    data = bg_pts,
-    aes(x = distance_to_archetype, y = anomaly_score),
-    color = "grey80", alpha = 0.4, size = 1.2
-  ) +
-  # 2. Routed known archetypes (d <= R_c)
-  geom_point(
-    data = known_pts,
-    aes(x = distance_to_archetype, y = anomaly_score, color = Plot_Group),
-    alpha = 0.75, size = 2.2
-  ) +
-  # 3. Rejected Novel Sub-Clusters (d > R_c & Score >= 0.60)
-  geom_point(
-    data = novel_pts,
-    aes(x = distance_to_archetype, y = anomaly_score, shape = Plot_Group),
-    color = "#7A0403", fill = "#7A0403", size = 3, stroke = 1
-  ) +
-  # 4. Decision boundaries: Score threshold (T = 0.60) and Cluster Radius (R_c)
-  geom_hline(yintercept = 0.60, linetype = "dashed", color = "red", linewidth = 0.7) +
-  geom_vline(
-    data = radii_df,
-    aes(xintercept = Cluster_Radius),
-    linetype = "dashed", color = "black", linewidth = 0.7
-  ) +
-  facet_wrap(~closest_archetype, ncol = 2) +
-  scale_color_viridis_d(
-    option = "turbo",
-    limits = paste("Cluster", 1:4),
-    drop = FALSE,
-    name = "Routed Archetype"
-  ) +
-  scale_shape_manual(
-    values = c("Novel_1" = 15, "Novel_2" = 17, "Novel_3" = 18, "Novel_4" = 8),
-    name = "Novel Sub-Cluster"
-  ) +
-  theme_bw(base_size = 12) +
-  labs(
-    title = "Predictive Routing Decision Space: Anomaly Score vs. Topological Distance",
-    subtitle = "Vertical dashed line = Cluster Radius (R_c); Horizontal dashed line = Threshold (T = 0.60)",
-    x = "Proportional Hamming Distance to Closest Baseline Medoid",
-    y = "Isolation Forest Anomaly Score"
-  ) +
-  theme(
-    legend.position = "bottom",
-    legend.box = "vertical",
-    strip.background = element_rect(fill = "#f0f0f0", color = "grey80"),
-    strip.text = element_text(face = "bold"),
-    panel.grid.minor = element_blank()
-  )
-```
-
-```{r}
-#| label: fig-medoid-only-mds
-#| echo: true
-#| code-summary: "Show 8-Medoid MDS Projection Code"
-#| message: false
-#| warning: false
-#| fig-width: 8.5
-#| fig-height: 6.5
-#| fig-cap: "Two-dimensional metric MDS projection of the 4 locked Baseline Medoids (diamonds) and the 4 Novel Sub-Cluster Medoids (dark red shapes). Dashed segments connect each novel medoid to its nearest baseline medoid, annotated with the exact proportional Hamming distance (d) versus that baseline cluster's radius (R_c)."
-
-library(ggplot2)
-library(dplyr)
-
-# 1. Extract the medoid (minimum rowSum of Hamming distance) for each of the 4 Novel Sub-Clusters
-novel_cluster_ids <- stats::cutree(novel_tree, k = 4)
-novel_medoid_rel_idx <- sapply(1:4, function(cid) {
-  idx <- which(novel_cluster_ids == cid)
-  if (length(idx) == 1) return(idx)
-  sub_d <- novel_dist_mat[idx, idx, drop = FALSE]
-  idx[which.min(rowSums(sub_d))]
-})
-
-novel_medoid_sigs <- novel_sigs[novel_medoid_rel_idx, , drop = FALSE]
-rownames(novel_medoid_sigs) <- paste0("Novel_", 1:4)
-
-# 2. Combine the 4 Baseline Medoids and 4 Novel Medoids (8 x 500 matrix)
-medoid_sigs <- engine_baseline@baseline_signatures
-all_8_sigs  <- rbind(medoid_sigs, novel_medoid_sigs)
-
-# 3. Compute the exact 8 x 8 proportional Hamming distance matrix
-t_8 <- t(all_8_sigs)
-dist_8x8 <- vapply(
-  seq_len( ncol(t_8) ),
-  function(i) colSums(t_8 != t_8[, i]) / nrow(t_8),
-  numeric(ncol(t_8))
-)
-dimnames(dist_8x8) <- list(rownames(all_8_sigs), rownames(all_8_sigs))
-
-# 4. Metric MDS on the 8 medoids (preserving raw Hamming scale)
-mds_8 <- stats::cmdscale(stats::as.dist(dist_8x8), k = 2, eig = TRUE)
-gof_pct <- round(100 * sum(mds_8$eig[1:2]) / sum(pmax(mds_8$eig, 0)), 1)
-
-coords_8 <- data.frame(
-  ID = rownames(all_8_sigs),
-  MDS1 = mds_8$points[, 1],
-  MDS2 = mds_8$points[, 2],
-  Type = c(rep("Baseline Medoid", 4), rep("Novel Medoid", 4)),
-  stringsAsFactors = FALSE
-)
-
-# 5. Build nearest-baseline connector segments with exact (d vs. R_c) labels
-cross_dist <- dist_8x8[5:8, 1:4, drop = FALSE]
-nearest_base_idx <- max.col(-cross_dist, ties.method = "first")
-nearest_base_names <- colnames(cross_dist)[nearest_base_idx]
-exact_d <- cross_dist[cbind(1:4, nearest_base_idx)]
-base_r  <- unname(engine_baseline@cluster_radii[nearest_base_names])
-
-edges_df <- data.frame(
-  Novel_ID = rownames(cross_dist),
-  Base_ID = nearest_base_names,
-  x = coords_8$MDS1[5:8],
-  y = coords_8$MDS2[5:8],
-  xend = coords_8$MDS1[nearest_base_idx],
-  yend = coords_8$MDS2[nearest_base_idx],
-  Label = sprintf("d = %.3f\n(R = %.3f)", exact_d, base_r),
-  stringsAsFactors = FALSE
-) |>
-  mutate(
-    mid_x = (x + xend) / 2,
-    mid_y = (y + yend) / 2
-  )
-
-base_coords  <- subset(coords_8, Type == "Baseline Medoid")
-novel_coords <- subset(coords_8, Type == "Novel Medoid")
-
-ggplot() +
-  # Connector segments to closest baseline medoid
-  geom_segment(
-    data = edges_df,
-    aes(x = x, y = y, xend = xend, yend = yend),
-    linetype = "dashed", color = "grey45", linewidth = 0.7
-  ) +
-  # Distance vs. Radius edge annotations
-  geom_label(
-    data = edges_df,
-    aes(x = mid_x, y = mid_y, label = Label),
-    size = 3, fill = "white", alpha = 0.85, label.size = 0.2
-  ) +
-  # Baseline Medoids (diamonds)
-  geom_point(
-    data = base_coords,
-    aes(x = MDS1, y = MDS2, fill = ID),
-    shape = 23, size = 6, color = "black", stroke = 1.2
-  ) +
-  # Novel Sub-Cluster Medoids (distinct dark red shapes)
-  geom_point(
-    data = novel_coords,
-    aes(x = MDS1, y = MDS2, shape = ID),
-    color = "#7A0403", fill = "#7A0403", size = 4.5, stroke = 1.2
-  ) +
-  # Direct text labels for medoids
-  geom_text(
-    data = coords_8,
-    aes(x = MDS1, y = MDS2, label = ID),
-    vjust = -1.3, fontface = "bold", size = 3.5
-  ) +
-  scale_fill_viridis_d(option = "turbo", name = "Baseline Medoid") +
-  scale_shape_manual(
-    values = c("Novel_1" = 15, "Novel_2" = 17, "Novel_3" = 18, "Novel_4" = 8),
-    name = "Novel Medoid"
-  ) +
-  expand_limits(
-    x = range(coords_8$MDS1) + c(-0.08, 0.08),
-    y = range(coords_8$MDS2) + c(-0.08, 0.08)
-  ) +
-  theme_bw(base_size = 12) +
-  labs(
-    title = "Topological Map of Baseline and Novel Archetype Medoids (8x8 Metric MDS)",
-    subtitle = sprintf("2D Variance Explained: %.1f%% | Dashed links show nearest baseline medoid (d > R_c)", gof_pct),
-    x = "Metric MDS Dimension 1 (Proportional Hamming Scale)",
-    y = "Metric MDS Dimension 2 (Proportional Hamming Scale)"
-  ) +
-  theme(
-    legend.position = "bottom",
-    legend.box = "vertical",
-    panel.grid.minor = element_blank()
-  )
-```
-
-
-
-
-```{r}
-#| label: fig-baseline-topology-highres
-#| fig-cap: "Topological Validation of Baseline Configuration (Target Plateau: k=4)"
-#| fig-height: 12
-#| fig-width: 9
-#| message: false
-#| warning: false
-
-library(isoRouting)
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(diptest)
-
-yaml_baseline <- "
-ntrees: 500
-sample_size: 256
-temporal_window_hours: 2
-anomaly_threshold: 0.60
-target_variables:
-  - delta_t
-  - delta_rh
-  - delta_t_deriv_15m
-context_variables:
-  - power
-  - t_outdoor
-  - rh_outdoor
-  - t_supply
-  - t_return
-  - sp_return
-"
-config_base <- tempfile(pattern = "config_base_", fileext = ".yml")
-writeLines(yaml_baseline, config_base)
-
-engine_base <- new("DiagnosticEngine", config_path = config_base)
-engine_base <- ingest_time_course(engine_base, data = baseline_telemetry)
-
-# Swapped exact thresholds for statistical substrate bounds (N)
-res_base <- evaluate_k_stability(
-  engine_base, 
-  max_N = 850, 
-  min_N = 30, 
-  nb_steps = 61,
-  min_k = 2,
-  max_k = 10
-)
-
-plot_base <- res_base |>
-  pivot_longer(
-    cols = c(N_Anomalies, Opt_k, Hartigans_D, Global_LID), 
-    names_to = "Metric", 
-    values_to = "Value"
-  ) |>
-  mutate(Metric = factor(Metric, levels = c("N_Anomalies", "Hartigans_D", "Global_LID", "Opt_k")))
-
-max_dip_base <- plot_base |>
-  filter(Metric == "Hartigans_D") |>
-  filter(Value == max(Value, na.rm = TRUE)) |>
-  slice(1)
-
-# Isolate the minimum LID coordinate for highlighting
-min_lid_base <- plot_base |>
-  filter(Metric == "Global_LID") |>
-  filter(Value == min(Value, na.rm = TRUE)) |>
-  slice(1)
-
-ggplot(plot_base, aes(x = Threshold, y = Value, color = Metric)) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 3) +
-  geom_point(data = max_dip_base, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
-  # Highlight the minimum Global_LID point
-  geom_point(data = min_lid_base, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
-  facet_wrap(
-    ~Metric, 
-    scales = "free_y", 
-    ncol = 1,
-    labeller = as_labeller(c(
-      N_Anomalies = "Number of Anomalies (N)",
-      Hartigans_D = "Cluster Effect Size (Hartigan's Dip Statistic)", 
-      Global_LID = "Local Intrinsic Dimensionality (LID)",
-      Opt_k = "Optimal Clusters (k)"
-    ))
-  ) +
-  scale_color_manual(values = c(
-    "N_Anomalies" = "#0072B2", 
-    "Hartigans_D" = "#009E73", 
-    "Global_LID" = "#CC79A7", 
-    "Opt_k" = "#D55E00"
-  )) +
-  # Use dynamic breaks since threshold values are dynamically extracted from N
-  scale_x_continuous(n.breaks = 10) +
-  labs(
-    title = "Topological Validation: Baseline Configuration",
-    subtitle = "Target Variables: delta_t, delta_rh, delta_t_deriv_15m",
-    x = "Anomaly Threshold",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.minor = element_blank(), 
-    plot.title = element_text(face = "bold"),
-    legend.position = "none",
-    strip.text = element_text(face = "bold", size = 11)
-  )
-```
-
-
-```{r}
-#| label: estimate-healthy-lid
-#| echo: true
-
-# 1. Extract Full System State
-features <- engine_base@feature_matrix
-hyps <- engine_base@hyperparameters
-ntrees <- hyps$ntrees
-actual_size <- min(hyps$sample_size, nrow(features))
-
-# Train global model to predict scores and isolate "normal" data
-global_model <- suppressWarnings(
-  isotree::isolation.forest(features, ntrees = ntrees, sample_size = actual_size, missing_action = "fail")
-)
-global_scores <- stats::predict(global_model, features)
-
-# Define "Healthy" as the lowest 50% of anomaly scores
-threshold_healthy <- median(global_scores)
-healthy_idx <- which(global_scores <= threshold_healthy)
-
-# 2. Find Valid Contiguous Blocks (N = 30)
-# We need 30 sequential time steps that are ALL classified as healthy
-block_size <- 30
-valid_starts <- c()
-
-max_start <- nrow(features) - block_size + 1
-for (i in 1:max_start) {
-  if (all((i:(i + block_size - 1)) %in% healthy_idx)) {
-    valid_starts <- c(valid_starts, i)
-  }
-}
-
-if (length(valid_starts) == 0) {
-  stop("No contiguous healthy blocks found! Adjust the health threshold.")
-}
-
-message(sprintf("Found %d valid contiguous healthy blocks of size %d.", length(valid_starts), block_size))
-
-# 3. Monte Carlo: Sample blocks and compute local LID
-iterations <- 200
-k_neighbors <- 5
-healthy_lids <- numeric(iterations)
-
-set.seed(42)
-sampled_starts <- sample(valid_starts, iterations, replace = TRUE)
-
-for (i in seq_along(sampled_starts)) {
-  start_idx <- sampled_starts[i]
-  block_idx <- start_idx:(start_idx + block_size - 1)
-  block_features <- features[block_idx, ]
-  
-  # Build local Isolation Forest geometry to match the anomaly pipeline exactly
-  iso_model <- suppressWarnings(
-    isotree::isolation.forest(block_features, ntrees = ntrees, sample_size = block_size, missing_action = "fail")
-  )
-  d_obj <- stats::predict(iso_model, block_features, type = "dist")
-  d_mat <- as.matrix(d_obj)
-  
-  # Compute Global LID for this healthy block
-  # We pass a dummy cluster label since we only care about the Global_LID return value
-  lid_res <- compute_lid_profile(d_mat, cluster_labels = rep(1, block_size), k = k_neighbors)
-  healthy_lids[i] <- lid_res$Global_LID
-}
-
-mean_healthy_lid <- mean(healthy_lids, na.rm = TRUE)
-quantiles <- stats::quantile(healthy_lids, probs = c(0.025, 0.975), na.rm = TRUE)
-
-message(sprintf("\n--- Healthy Control Baseline (N=%d) ---", block_size))
-message(sprintf("Mean Healthy LID: %.3f", mean_healthy_lid))
-message(sprintf("Empirical 95%% Interval: [%.3f, %.3f]", quantiles[1], quantiles[2]))
-```
-
-
-
-```{r}
-#| label: plot-healthy-lid-profile-random
-#| echo: true
-#| message: false
-#| warning: false
-#| fig-width: 8
-#| fig-height: 5
-
-library(ggplot2)
-library(purrr)
-library(dplyr)
-library(isotree)
-
-# 1. Map subset sizes (N) to precise Anomaly Thresholds
-features <- engine_base@feature_matrix
-hyps <- engine_base@hyperparameters
-actual_size <- min(hyps$sample_size, nrow(features))
-
-set.seed(42)
-global_model <- suppressWarnings(
-  isolation.forest(features, ntrees = hyps$ntrees, sample_size = actual_size, missing_action = "fail")
-)
-scores <- stats::predict(global_model, features)
-sorted_scores <- sort(scores, decreasing = TRUE)
-
-n_sequence <- seq(30, 100, by = 10)
-
-message(sprintf("Simulating random healthy LID space across %d steps...", length(n_sequence)))
-
-# 2. Sweep the Monte Carlo simulation and bind the Threshold
-lid_results_random <- map_dfr(n_sequence, function(n) {
-  res <- simulate_healthy_lid_baseline(engine_base, N = n, iterations = 200)
-  
-  # Extract the exact threshold score that bounds this subset size
-  res$Threshold <- sorted_scores[n]
-  return(res)
-})
-
-# 3. Visualize against Threshold
-fig_lid_random <- ggplot(lid_results_random, aes(x = Threshold)) +
-  geom_ribbon(aes(ymin = Q05, ymax = Q95), fill = "#009E73", alpha = 0.2) +
-  geom_line(aes(y = Median), color = "#009E73", linewidth = 1.2) +
-  geom_point(aes(y = Median), color = "#009E73", size = 3) +
-  scale_x_continuous(n.breaks = 10) +
-  labs(
-    title = "Random Healthy Baseline: Intrinsic Dimensionality (LID)",
-    subtitle = "Median and [5%, 95%] bounds of normal operating states (non-contiguous sampling)",
-    x = "Anomaly Threshold",
-    y = "Local Intrinsic Dimensionality (LID)"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    plot.title = element_text(face = "bold"),
-    panel.grid.minor = element_blank()
-  )
-
-print(fig_lid_random)
-```
-
-```{r}
-#| label: plot-empirical-null-dip
-#| echo: true
-#| message: false
-#| warning: false
-#| fig-width: 8
-#| fig-height: 5
-
-library(ggplot2)
-library(purrr)
-library(dplyr)
-library(isotree)
-
-# 1. Map subset sizes (N) to precise Anomaly Thresholds
-features <- engine_base@feature_matrix
-hyps <- engine_base@hyperparameters
-actual_size <- min(hyps$sample_size, nrow(features))
-
-set.seed(42)
-global_model <- suppressWarnings(
-  isolation.forest(features, ntrees = hyps$ntrees, sample_size = actual_size, missing_action = "fail")
-)
-scores <- stats::predict(global_model, features)
-sorted_scores <- sort(scores, decreasing = TRUE)
-
-n_sequence <- seq(30, 100, by = 10)
-
-message(sprintf("Simulating empirical null space across %d steps...", length(n_sequence)))
-
-# 2. Sweep the Monte Carlo simulation and bind the Threshold
-null_results <- map_dfr(n_sequence, function(n) {
-  res <- simulate_empirical_null_dip(engine_base, N = n)
-  # Extract the exact threshold score that bounds this subset size
-  res$Threshold <- sorted_scores[n]
-  return(res)
-})
-
-# 3. Visualize against Threshold
-fig_null <- ggplot(null_results, aes(x = Threshold)) +
-  geom_ribbon(aes(ymin = Q05, ymax = Q95), fill = "#D55E00", alpha = 0.2) +
-  geom_line(aes(y = Median), color = "#D55E00", linewidth = 1.2) +
-  geom_point(aes(y = Median), color = "#D55E00", size = 3) +
-  scale_x_continuous(n.breaks = 10) +
-  labs(
-    title = "Empirical Null Baseline for Hartigan's Dip Statistic",
-    subtitle = "Median and [5%, 95%] chaos bounds via independent feature permutation",
-    x = "Anomaly Threshold",
-    y = "Hartigan's D"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    plot.title = element_text(face = "bold"),
-    panel.grid.minor = element_blank()
-  )
-
-print(fig_null)
-```
-
-```{r}
-#| label: plot-extreme-medoids
-#| echo: true
-#| message: false
-#| fig-width: 10
-#| fig-height: 10
-
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(stringr)
-
-# 1. DYNAMICALLY TARGET THE EXACT PEAK FROM THE STABILITY SWEEP
-# Pull the exact threshold where Hartigan's D reached its maximum in res_base
-th_extreme <- res_base$Threshold[which.max(res_base$Hartigans_D)]
-
-message(sprintf("Targeting Peak Threshold (T = %.4f)...", th_extreme))
-
-# 2. EXTRACT AND CLUSTER USING S4 API
-# The fixed seed guarantees we perfectly recreate the sweep's topology
-engine_extreme <- suppressMessages(extract_anomalies(engine_base, threshold = th_extreme))
-engine_extreme <- suppressMessages(compute_distances(engine_extreme))
-engine_extreme <- suppressMessages(calibrate(engine_extreme, min_k = 2, max_k = 2))
-engine_extreme <- suppressMessages(extract_medoids(engine_extreme, k = 2))
-
-# 3. EXTRACT AND WRANGLE DYNAMIC WINDOWS
-message("Formatting +/- 2 hour medoid windows for k=2...")
-raw_medoids <- get_medoids(engine_extreme)
-
-# Dynamically pull valid columns from the active schema to prevent silent drops
-schema <- get_features(engine_extreme)
-plot_vars <- intersect(
-  c(schema$context_variables, schema$target_variables), 
-  colnames(raw_medoids)
-)
-
-# Helper to automatically format variable names for the plot labels
-format_var_name <- function(x) {
-  str_to_title(str_replace_all(str_replace_all(x, "_15m", ""), "_", " "))
-}
-
-plot_data <- raw_medoids %>%
-  mutate(
-    Relative_Time = as.numeric(difftime(timestamp, medoid_timestamp, units = "hours")),
-    Archetype = str_replace(cluster, "Cluster", "Archetype")
-  ) %>%
-  pivot_longer(
-    cols = all_of(plot_vars),
-    names_to = "Variable",
-    values_to = "Value"
-  ) %>%
-  mutate(
-    Variable_Clean = factor(Variable, levels = plot_vars, labels = sapply(plot_vars, format_var_name)),
-    Archetype_Label = case_when(
-      Archetype == "Archetype 1" ~ "1: Terminal Mode A",
-      Archetype == "Archetype 2" ~ "2: Terminal Mode B",
-      TRUE ~ Archetype
-    )
-  )
-
-# 4. VISUALIZATION MATRIX
-fig_extreme <- ggplot(plot_data, aes(x = Relative_Time, y = Value, color = Variable_Clean)) +
-  geom_line(linewidth = 1) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black", alpha = 0.5) +
-  facet_grid(Variable_Clean ~ Archetype_Label, scales = "free_y") +
-  scale_color_viridis_d(option = "turbo") + 
-  labs(
-    title = sprintf("Multivariate Trajectories of Terminal HVAC Faults (T=%.4f)", th_extreme),
-    subtitle = "Features displayed reflect the active YAML schema of the target engine.",
-    x = "Relative Time from Structural Break (Hours)",
-    y = "Telemetry Value"
-  ) +
-  theme_bw(base_size = 12) +
-  theme(
-    legend.position = "none",
-    strip.text.x = element_text(face = "bold", size = 12),
-    strip.text.y = element_text(face = "bold", size = 11, angle = 270), 
-    strip.background = element_rect(fill = "#f0f0f0", color = "grey80", linewidth = 0.5),
-    panel.grid.minor = element_blank(),
-    panel.spacing = unit(0, "pt"),
-    panel.border = element_rect(color = "grey80", fill = NA, linewidth = 0.5)
-  )
-
-print(fig_extreme)
-```
-
-```{r}
-#| label: fig-experimental-topology-highres
-#| fig-cap: "Topological Validation of Experimental Configuration (Testing power_deriv_15m)"
-#| fig-height: 9
-#| fig-width: 9
-#| message: false
-#| warning: false
-
-yaml_exp <- "
-ntrees: 500
-sample_size: 256
-temporal_window_hours: 2
-anomaly_threshold: 0.60
-target_variables:
-  - delta_t
-  - delta_rh
-  - delta_t_deriv_15m
-  - power_deriv_15m
-context_variables:
-  - power
-  - t_outdoor
-  - rh_outdoor
-  - t_supply
-  - t_return
-  - sp_return
-"
-config_exp <- tempfile(pattern = "config_exp_", fileext = ".yml")
-writeLines(yaml_exp, config_exp)
-
-engine_exp <- new("DiagnosticEngine", config_path = config_exp)
-engine_exp <- ingest_time_course(engine_exp, data = baseline_telemetry)
-
-# Swapped exact thresholds for statistical substrate bounds (N)
-res_exp <- evaluate_k_stability(
-  engine_exp, 
-  max_N = 850, 
-  min_N = 30, 
-  nb_steps = 61,
-  min_k = 2,
-  max_k = 10
-)
-
-plot_exp <- res_exp |>
-  pivot_longer(cols = c(N_Anomalies, Opt_k, Hartigans_D), names_to = "Metric", values_to = "Value") |>
-  mutate(Metric = factor(Metric, levels = c("N_Anomalies", "Hartigans_D", "Opt_k")))
-
-max_dip_exp <- plot_exp |>
-  filter(Metric == "Hartigans_D") |>
-  filter(Value == max(Value, na.rm = TRUE)) |>
-  slice(1)
-
-ggplot(plot_exp, aes(x = Threshold, y = Value, color = Metric)) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 3) +
-  geom_point(data = max_dip_exp, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
-  facet_wrap(
-    ~Metric, 
-    scales = "free_y", 
-    ncol = 1,
-    labeller = as_labeller(c(
-      N_Anomalies = "Number of Anomalies (N)",
-      Hartigans_D = "Cluster Effect Size (Hartigan's Dip Statistic)", 
-      Opt_k = "Optimal Clusters (k)"
-    ))
-  ) +
-  scale_color_manual(values = c("N_Anomalies" = "#0072B2", "Hartigans_D" = "#009E73", "Opt_k" = "#D55E00")) +
-  # Use dynamic breaks since threshold values are dynamically extracted from N
-  scale_x_continuous(n.breaks = 10) +
-  labs(
-    title = "Topological Validation: Experimental Configuration",
-    subtitle = "Target Variables: Base + power_deriv_15m",
-    x = "Anomaly Threshold",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.minor = element_blank(), 
-    plot.title = element_text(face = "bold"),
-    legend.position = "none",
-    strip.text = element_text(face = "bold", size = 11)
-  )
-```
+- **Decoupled Feature Engineering and Model Configuration:** While users must still compute domain-specific features in their data frame—and validate that added variables do not dilute the anomaly score tail (@fig-score-compression-24-vs-30, @fig-mc-feature-subset-control), `isoRouting` separates feature preparation from the downstream diagnostic code. Once candidate columns are present in the dataset, external YAML files control which variables are passed to the Isolation Forest (`target_variables`), which are retained for visualization (`context_variables`), and how the forest is parameterized. Testing different subsets of prepared features requires only passing a different YAML path to `new("DiagnosticEngine", config_path = ...)` without modifying the analysis script.
+- **Quantitative Threshold and Cluster Calibration:** Method `evaluate_k_stability()` helps choosing an anomaly score threshold (@fig-engineered-evaluate-stability). It computes global silhouette width, Hartigan's dip statistic ($D$), and Local Intrinsic Dimensionality (LID) across candidate thresholds. The companion methods `simulate_dip_control()` (@fig-engineered-control-dip) and `simulate_lid_control()` (@fig-engineered-control-lid) generate Monte Carlo null bounds to verify that distance multimodality and dimensional reductions exceed random sampling expectations.
+- **Archetype Extraction and Feature Attribution:** `extract_medoids()` isolates representative fault trajectories (@fig-engineered-comprehensive-medoids), and `commit_ledger()` records all above-threshold occurrences alongside their distances to each medoid. To explain why specific medoids receive high anomaly scores, `ablate_features()` performs Leave-One-Covariate-Out (LOCO) ablation, ranking target variables by their score contribution (@fig-ablation-results, @fig-novel-ablation).
+- **Sub-Threshold Tracking and Online Stream Routing:** Because the committed `DiagnosticEngine` caches cluster radii (`@cluster_radii`) and medoid leaf-node signatures (`@baseline_signatures`), it can classify additional data without retraining the Isolation Forest. `route_time_course()` maps sub-threshold precursors across historical data (@fig-routed-timeline), while `predict_stream()` routes incoming observations into known clusters, background operation, or novel anomalies (@tbl-predict-stream). Finally, `isolate_novel_anomalies()` branches a new `DiagnosticEngine` object onto rejected novel events so they can be sub-clustered and analyzed with the exact same plotting and ablation methods (@tbl-novel-subclusters, @fig-novel-medoids-trajectories).
 
