@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{get_medoids}
 \alias{get_medoids}
+\alias{get_medoids,DiagnosticEngine-method}
 \title{Get Topological Medoids}
 \usage{
 get_medoids(object)
+
+\S4method{get_medoids}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

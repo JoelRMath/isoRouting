@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{calibrate}
 \alias{calibrate}
+\alias{calibrate,DiagnosticEngine-method}
 \title{Calibrate Cluster Integrity}
 \usage{
 calibrate(object, min_k = 2, max_k = 8)
+
+\S4method{calibrate}{DiagnosticEngine}(object, min_k = 2, max_k = 8)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

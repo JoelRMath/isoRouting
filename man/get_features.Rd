@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{get_features}
 \alias{get_features}
+\alias{get_features,DiagnosticEngine-method}
 \title{Get Feature Schema}
 \usage{
 get_features(object)
+
+\S4method{get_features}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

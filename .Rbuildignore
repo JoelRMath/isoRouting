@@ -1,8 +1,12 @@
-^LICENSE\.md$
+^vignettes/.*_cache$
+^vignettes/.*_files$
+^vignettes/.*\.html$
+^vignettes/hvac\.qmd$
+^Rplots\.pdf$
+^save\.R$
 ^.*\.Rproj$
 ^\.Rproj\.user$
-^manuscript$
+^LICENSE\.md$
 ^_pkgdown\.yml$
-^docs$
-^pkgdown$
 ^data-raw$
+^manuscript$

@@ -1,26 +1,37 @@
 Package: isoRouting
-Title: Diagnostic Engine for Multivariate Time Series (e.g., telemetry)
+Title: Diagnostic Engine for Multivariate Time Series
 Version: 0.1.0
 Authors@R: person("Joël R.", "Pradines", email = "joel.pradines@gmail.com", role = c("aut", "cre"))
-Description: Provides a deterministic routing engine for multivariate time series anomaly detection. By extracting terminal node topologies from Isolation Forests, the package bypasses Euclidean scaling artifacts to cluster anomalies using Hamming distance and hierarchical division. It includes methods to calibrate cluster integrity, extract topological medoids, and route streaming data into established historical archetypes.    
+Description: Provides a deterministic routing engine for multivariate time series anomaly detection. By extracting terminal node topology from Isolation Forests, the package bypasses Euclidean scaling artifacts to cluster anomalies using Hamming distance and hierarchical division. It includes methods to calibrate cluster integrity, extract topological medoids, and route streaming data into established historical archetypes.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
+Depends: 
+    R (>= 3.5)
 Imports: 
     cluster,
+    diptest,
     dplyr,
-    dtw,
     isotree,
     lubridate,
     methods,
     purrr,
     stats,
-    yaml,
-    diptest
-Depends: 
-    R (>= 3.5)
-LazyData: true
-Suggests: 
-    testthat (>= 3.0.0)
+    yaml
+Suggests:
+    ggplot2,
+    GGally,
+    ggcorrplot,
+    stringr,
+    hms,
+    knitr,
+    mgcv,
+    patchwork,
+    quarto,
+    scales,
+    testthat (>= 3.0.0),
+    tidyr
+VignetteBuilder: quarto
 Config/testthat/edition: 3
+LazyData: true

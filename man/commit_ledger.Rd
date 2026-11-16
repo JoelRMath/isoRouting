@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{commit_ledger}
 \alias{commit_ledger}
+\alias{commit_ledger,DiagnosticEngine-method}
 \title{Commit Forensic Ledger}
 \usage{
 commit_ledger(object, k = NULL)
+
+\S4method{commit_ledger}{DiagnosticEngine}(object, k = NULL)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

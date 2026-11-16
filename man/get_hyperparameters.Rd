@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{get_hyperparameters}
 \alias{get_hyperparameters}
+\alias{get_hyperparameters,DiagnosticEngine-method}
 \title{Get Engine Hyperparameters}
 \usage{
 get_hyperparameters(object)
+
+\S4method{get_hyperparameters}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{get_time_course}
 \alias{get_time_course}
+\alias{get_time_course,DiagnosticEngine-method}
 \title{Get Ingested Time Course}
 \usage{
 get_time_course(object)
+
+\S4method{get_time_course}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

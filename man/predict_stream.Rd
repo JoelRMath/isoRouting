@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{predict_stream}
 \alias{predict_stream}
+\alias{predict_stream,DiagnosticEngine-method}
 \title{Predict Streaming Data}
 \usage{
 predict_stream(object, new_data)
+
+\S4method{predict_stream}{DiagnosticEngine}(object, new_data)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object (must be fully calibrated with medoids extracted).}

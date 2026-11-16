@@ -94,7 +94,7 @@ check_time_continuity <- function(time_vector, tolerance = 0) {
   time_diffs <- as.numeric(difftime(time_vector[-1], time_vector[-length(time_vector)], units = "secs"))
   
   # Determine the median interval (assumed to be the intended frequency)
-  expected_diff <- median(time_diffs, na.rm = TRUE)
+  expected_diff <- stats::median(time_diffs, na.rm = TRUE)
   
   # Identify discontinuities outside the tolerance
   gaps <- which(abs(time_diffs - expected_diff) > tolerance)
@@ -151,6 +151,12 @@ compute_lid_profile <- function(dist_mat, cluster_labels, k = 5, eps = 1e-8) {
 }
 
 #' @title Simulate Control Quantiles for Local Intrinsic Dimensionality (LID)
+#' @description Generates Monte Carlo null distribution quantiles for Local Intrinsic Dimensionality across sample sizes.
+#' @param engine A \code{DiagnosticEngine} object with an ingested time course.
+#' @param N Integer vector of sample sizes to evaluate.
+#' @param iterations Integer. Number of Monte Carlo iterations (default 200).
+#' @param k Integer. Number of nearest neighbors for LID estimation (default 5).
+#' @return A \code{data.frame} containing simulated LID quantiles and score thresholds across \code{N}.
 #' @export
 simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
   features <- engine@feature_matrix
@@ -232,7 +238,12 @@ simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
   return(do.call(rbind, res_list))
 }
 
-#' Simulate Control Quantiles for Hartigan's Dip Statistic
+#' @title Simulate Control Quantiles for Hartigan's Dip Statistic
+#' @description Generates Monte Carlo null distribution quantiles for Hartigan's dip statistic across sample sizes.
+#' @param object A \code{DiagnosticEngine} object with an ingested time course.
+#' @param N Integer vector of sample sizes to evaluate.
+#' @param iterations Integer. Number of Monte Carlo iterations (default 200).
+#' @return A \code{data.frame} containing simulated Hartigan's dip quantiles and score thresholds across \code{N}.
 #' @export
 simulate_dip_control <- function(object, N, iterations = 200) {
   features <- object@feature_matrix

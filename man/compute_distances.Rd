@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{compute_distances}
 \alias{compute_distances}
+\alias{compute_distances,DiagnosticEngine-method}
 \title{Compute Distance Matrix}
 \usage{
 compute_distances(object)
+
+\S4method{compute_distances}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

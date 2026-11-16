@@ -27,6 +27,8 @@
 #' @slot cluster_radii numeric. Named vector of empirical cluster radii (maximum topological distance to each medoid).
 #'
 #' @import methods
+#' @importFrom yaml read_yaml
+#' @rdname DiagnosticEngine-class
 #' @export
 setClass(
   "DiagnosticEngine",
@@ -255,6 +257,10 @@ setGeneric("isolate_novel_anomalies", function(object, routed_data, min_k = 2, m
 
 # --- INITIALIZATION METHOD ---
 
+#' @rdname DiagnosticEngine-class
+#' @param .Object The prototype \code{DiagnosticEngine} instance being initialized.
+#' @param config_path Character. Path to the YAML configuration file.
+#' @param ... Additional slot arguments passed to the default S4 initializer.
 #' @export
 setMethod("initialize", "DiagnosticEngine", function(.Object, config_path, ...) {
   
@@ -296,16 +302,19 @@ setMethod("initialize", "DiagnosticEngine", function(.Object, config_path, ...) 
 
 # --- ACCESSORS ---
 
+#' @rdname get_hyperparameters
 #' @export
 setMethod("get_hyperparameters", "DiagnosticEngine", function(object) {
   return(object@hyperparameters)
 })
 
+#' @rdname get_features
 #' @export
 setMethod("get_features", "DiagnosticEngine", function(object) {
   return(object@feature_schema)
 })
 
+#' @rdname get_ledger
 #' @export
 setMethod("get_ledger", "DiagnosticEngine", function(object) {
   if (nrow(object@forensic_ledger) == 0) {
@@ -314,6 +323,7 @@ setMethod("get_ledger", "DiagnosticEngine", function(object) {
   return(object@forensic_ledger)
 })
 
+#' @rdname get_medoids
 #' @export
 setMethod("get_medoids", "DiagnosticEngine", function(object) {
   if (length(object@medoids) == 0) {
@@ -323,6 +333,7 @@ setMethod("get_medoids", "DiagnosticEngine", function(object) {
   return(dplyr::bind_rows(object@medoids))
 })
 
+#' @rdname get_time_course
 #' @export
 setMethod("get_time_course", "DiagnosticEngine", function(object) {
   if (nrow(object@raw_time_course) == 0) {
@@ -331,6 +342,7 @@ setMethod("get_time_course", "DiagnosticEngine", function(object) {
   return(object@raw_time_course)
 })
 
+#' @rdname get_scored_time_course
 #' @export
 setMethod("get_scored_time_course", "DiagnosticEngine", function(object) {
   if (nrow(object@scored_time_course) == 0) {
@@ -341,6 +353,7 @@ setMethod("get_scored_time_course", "DiagnosticEngine", function(object) {
 
 # --- CORE METHODS ---
 
+#' @rdname ingest_time_course
 #' @export
 setMethod("ingest_time_course", "DiagnosticEngine", function(object, data, tolerance = NULL) {
   if (object@domain_state == "uninitialized") {
@@ -392,6 +405,7 @@ setMethod("ingest_time_course", "DiagnosticEngine", function(object, data, toler
   return(object)
 })
 
+#' @rdname extract_anomalies
 #' @export
 setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   # Allow re-extraction at any point after initial ingestion
@@ -442,6 +456,7 @@ setMethod("extract_anomalies", "DiagnosticEngine", function(object, threshold) {
   return(object)
 })
 
+#' @rdname compute_distances
 #' @export
 setMethod("compute_distances", "DiagnosticEngine", function(object) {
   if (!object@domain_state %in% c("anomalies_extracted", "calibrated")) {
@@ -491,6 +506,7 @@ setMethod("compute_distances", "DiagnosticEngine", function(object) {
   return(object)
 })
 
+#' @rdname calibrate
 #' @export
 setMethod("calibrate", "DiagnosticEngine", function(object, min_k = 2, max_k = 8) {
   if (!object@domain_state %in% c("distances_computed", "calibrated")) {
@@ -642,6 +658,7 @@ setMethod("extract_medoids", "DiagnosticEngine", function(object, threshold = NU
   return(object)
 })
 
+#' @rdname ablate_features
 #' @export
 setMethod("ablate_features", "DiagnosticEngine", function(object) {
   if (length(object@medoids) == 0) {
@@ -651,7 +668,7 @@ setMethod("ablate_features", "DiagnosticEngine", function(object) {
   targets <- object@feature_schema$target_variables
   
   message("Computing global medians for LOCO ablation...")
-  baseline_medians <- apply(object@feature_matrix, 2, median, na.rm = TRUE)
+  baseline_medians <- apply(object@feature_matrix, 2, stats::median, na.rm = TRUE)
   
   # Extract exactly the medoid peak (t=0) from the internal medoids list
   peak_list <- lapply(object@medoids, function(df) {
@@ -685,7 +702,7 @@ setMethod("ablate_features", "DiagnosticEngine", function(object) {
   
   # Sort and rank strictly using base R to minimize dependency overhead inside the class
   compiled_results <- compiled_results[order(compiled_results$cluster, -compiled_results$score_drop), ]
-  compiled_results$rank <- ave(
+  compiled_results$rank <- stats::ave(
     compiled_results$score_drop, 
     compiled_results$cluster, 
     FUN = function(x) rank(-x, ties.method = "first")
@@ -697,6 +714,7 @@ setMethod("ablate_features", "DiagnosticEngine", function(object) {
   return(compiled_results)
 })
 
+#' @rdname commit_ledger
 #' @export
 setMethod("commit_ledger", "DiagnosticEngine", function(object, k = NULL) {
   if (!object@domain_state %in% c("calibrated", "medoids_extracted", "ledger_committed")) {
@@ -778,6 +796,7 @@ setMethod("commit_ledger", "DiagnosticEngine", function(object, k = NULL) {
   return(object)
 })
 
+#' @rdname explore_thresholds
 #' @export
 setMethod("explore_thresholds", "DiagnosticEngine", function(object, thresholds, ntrees, sample_size) {
   if (!object@domain_state %in% c("time_course_ingested", "anomalies_extracted", "distances_computed", "calibrated", "ledger_committed")) {
@@ -801,6 +820,7 @@ setMethod("explore_thresholds", "DiagnosticEngine", function(object, thresholds,
   return(data.frame(Threshold = thresholds, Event_Count = counts))
 })
 
+#' @rdname predict_stream
 #' @export
 setMethod("predict_stream", "DiagnosticEngine", function(object, new_data) {
   if (nrow(object@baseline_signatures) == 0 || length(object@cluster_radii) == 0) {

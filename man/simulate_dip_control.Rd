@@ -6,6 +6,16 @@
 \usage{
 simulate_dip_control(object, N, iterations = 200)
 }
+\arguments{
+\item{object}{A \code{DiagnosticEngine} object with an ingested time course.}
+
+\item{N}{Integer vector of sample sizes to evaluate.}
+
+\item{iterations}{Integer. Number of Monte Carlo iterations (default 200).}
+}
+\value{
+A \code{data.frame} containing simulated Hartigan's dip quantiles and score thresholds across \code{N}.
+}
 \description{
-Simulate Control Quantiles for Hartigan's Dip Statistic
+Generates Monte Carlo null distribution quantiles for Hartigan's dip statistic across sample sizes.
 }

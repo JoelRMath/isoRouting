@@ -6,32 +6,26 @@ vignette: >
   %\VignetteIndexEntry{Multivariate Time Series Anomaly Routing with isoRouting: Application to HVAC Telemetry}
   %\VignetteEngine{quarto::html}
   %\VignetteEncoding{UTF-8}
-execute:
-  dir: project
 format:
   html:
+    theme: cosmo
     code-fold: true
     code-summary: "Show Code"
     toc: true
     toc-depth: 4
     toc-location: left
-    theme: cosmo
-    math: true
+    html-math-method: mathml
+    fig-dpi: 96
+    fig-width: 7
+    fig-height: 4.5
+    fig-format: png
     embed-resources: true
     highlight-style: tango
     link-external-newwindow: true
-    include-after-body: 
-      text: |
-        <script>
-          document.querySelectorAll('a[href^="http"]').forEach(function(link) {
-            link.setAttribute("target", "_blank");
-          });
-        </script>
 bibliography: references.bib
 nocite: |
   @*
 ---
-
 <style>
   h4 { font-weight: bold !important; }
 </style>
@@ -49,6 +43,14 @@ nocite: |
   }
 </style>
 
+```{r}
+#| label: setup-pngquant
+#| include: false
+knitr::knit_hooks$set(pngquant = knitr::hook_pngquant)
+if (nzchar(Sys.which("pngquant"))) {
+  knitr::opts_chunk$set(pngquant = "--speed=1 --quality=65-80")
+}
+```
 
 ## 1 Need for a Package Handling Complex Variable Dependencies in Multivariate Time Series
 
@@ -85,8 +87,8 @@ hvac_raw <- hvac_features |>
 #| warning: false
 #| message: false
 #| echo: true
-#| fig-width: 8
-#| fig-height: 8
+#| fig-width: 7
+#| fig-height: 7
 #| code-summary: "Correlation Heatmap Code"
 #| fig-cap: "Global Pearson correlation heatmap (Turin HVAC Raw Telemetry)"
 
@@ -104,15 +106,16 @@ ggcorrplot(
   method = "square",
   type = "full",
   lab = TRUE,              
-  lab_size = 3.5,
+  lab_size = 3.0,
+  tl.cex = 11,
   lab_col = "black",       
   colors = c("#f8766d", "white", "#00bfc4"), 
   outline.color = "gray90",
   legend.title = "Correlation"
 ) +
 theme(
-  axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, face = "bold"),
-  axis.text.y = element_text(face = "bold")
+  axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+  axis.text.y = element_text()
 ) +
 scale_y_discrete(limits = rev)
 ```
@@ -126,8 +129,9 @@ Based on the heatmap one could be tempted to remove some variables with high cor
 #| message: false
 #| echo: true
 #| code-summary: "Scatterplot Code"
-#| fig-width: 12
-#| fig-height: 12
+#| dev: "jpeg"
+#| fig-width: 8
+#| fig-height: 8
 #| fig-cap: "Scatterplot matrix with correlation-mapped backgrounds (Sampled at n = 5000)"
 
 library(GGally)
@@ -154,11 +158,11 @@ custom_scatter_bg <- function(data, mapping, ...) {
 # 2. Generate the plot for a sample using the restricted raw data
 set.seed(42)
 p_pairs <- hvac_raw |>
-  sample_n(5000) |> 
+  sample_n(2500) |> 
   ggpairs(
     lower = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
     upper = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
-    title = "Pairwise Scatterplot Matrix (HVAC Raw Telemetry)"
+    title = "Pairwise Scatterplot Matrix (Raw Telemetry)"
   ) +
   theme_minimal() +
   theme(
@@ -624,9 +628,11 @@ threshold_curve <- explore_thresholds(engine, thresholds = seq(0.50, 0.75, by = 
 
 ```{r}
 #| label: fig-naive-threshold-decay
+#| def: "jpeg"
 #| eval: true
 #| echo: true
 #| code-summary: "Visualization Code"
+#| fig-width: 5.5
 #| fig-cap: "Anomaly threshold decay curve showing the reduction in isolated extreme events as the Isolation Forest score threshold increases."
 #| warning: false
 #| message: false
@@ -644,7 +650,11 @@ ggplot(threshold_curve, aes(x = Threshold, y = Event_Count)) +
     x = "Isolation Forest Threshold",
     y = "Number of Extracted Events"
   ) +
-  theme_minimal()
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(size = 11),
+    plot.subtitle = element_text(size = 9)
+  )
 ```
 
 Conversely, get_threshold_at_N() finds the score cutoff required to isolate at least $N$ anomalies.
@@ -681,7 +691,7 @@ Method `evaluate_k_stability()` maps the anomaly score threshold ($T$) against t
 
 - **Optimal Clusters ($k$)**: At each value of threshold $T$, divisive clustering [@kaufman1990finding] groups the anomalies. The optimal cluster count $k$ (best tree cut) is selected by maximizing the global silhouette score [@rousseeuw1987silhouettes]. Plotting $k$ against $T$ highlights threshold intervals (plateaus) where the cluster partition remains stable.
 - **Hartigan's Dip Statistic ($D$)**: Measures the multimodality of all pairwise Hamming distances [@hartigan1985dip]. High values of $D$ indicate strong distance heterogeneity—suggesting distances within clusters are likely smaller than distances between clusters.
-- **Local Intrinsic Dimensionality (LID)**: Estimates the number of independent variables governing the isolated points. A drop in LID suggests a system "breakdown," where variables become more coupled due to a physical fault (e.g. a failed sensor freezing at a constant value reduces the effective degrees of freedom).
+- **Local Intrinsic Dimensionality (LID)**: Estimates the number of independent variables governing the isolated points [@amsaleg2015estimating]. A drop in LID suggests a system "breakdown," where variables become more coupled due to a physical fault (e.g. a failed sensor freezing at a constant value reduces the effective degrees of freedom).
 
 <span id="stability-ggplot-target" class="flash-target" style="color: #0072B2;">Diagnostics Plotting Wrapper</span>
 ```{r}
@@ -721,10 +731,10 @@ plot_topological_stability <- function(stability_df, plot_title, plot_subtitle) 
   
   # Plot the 4-panel stability profile
   p <- ggplot(plot_data, aes(x = Threshold, y = Value, color = Metric)) +
-    geom_line(linewidth = 1.2) +
-    geom_point(size = 3) +
-    geom_point(data = max_dip, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
-    geom_point(data = min_lid, fill = "gold", color = "red", size = 4, shape = 21, stroke = 1.2) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    geom_point(data = max_dip, fill = "gold", color = "red", size = 3, shape = 21, stroke = 1.2) +
+    geom_point(data = min_lid, fill = "gold", color = "red", size = 3, shape = 21, stroke = 1.2) +
     facet_wrap(
       ~Metric, 
       scales = "free_y", 
@@ -752,7 +762,8 @@ plot_topological_stability <- function(stability_df, plot_title, plot_subtitle) 
     theme_minimal(base_size = 12) +
     theme(
       panel.grid.minor = element_blank(), 
-      plot.title = element_text(face = "bold"),
+      plot.title = element_text(face = "bold", size = 12),
+      plot.subtitle = element_text(size = 9),
       legend.position = "none",
       strip.text = element_text(face = "bold", size = 11)
     )
@@ -767,8 +778,8 @@ plot_topological_stability <- function(stability_df, plot_title, plot_subtitle) 
 #| echo: true
 #| code-summary: "Plot Call Code"
 #| fig-cap: "Diagnostic profiles across anomaly thresholds using raw telemetry features. Red-bordered gold circles mark the maximum Hartigan's D and minimum LID."
-#| fig-height: 12
-#| fig-width: 9
+#| fig-height: 9
+#| fig-width: 7
 #| warning: false
 #| message: false
 
@@ -784,7 +795,7 @@ print(fig_naive)
 
 In @fig-naive-evaluate-stability, the optimal cluster count $k$ fluctuates heavily at lower thresholds before settling into a broad plateau at $k = 4$ ($T \in [0.644, 0.662]$) and a final small plateau at $k = 2$ ($T \ge 0.664$). Across the $k = 4$ plateau, Hartigan's $D$ begins to climb while LID drops steadily. Both metrics reach their extremes in the $k = 2$ region: LID hits its minimum ($\approx 3.15$) at $T \approx 0.664$, and $D$ reaches its maximum ($\approx 0.128$) at $T \approx 0.667$.  
 
-To verify whether these $D$ and LID values differ significantly from normal operating variations, we compare them against Monte Carlo control distributions generated by `isoRouting` helper functions `simulate_dip_control()` and `simulate_lid_control()`. 
+To verify whether these $D$ and LID values differ significantly from normal operating variations, we compare them against Monte Carlo control distributions [@phipson2010permutation] generated by `isoRouting` helper functions `simulate_dip_control()` and `simulate_lid_control()`. 
 
 ```{r}
 #| label: naive-anomaly-thresholds
@@ -798,7 +809,7 @@ library(purrr)
 library(dplyr)
 
 n_sequence <- seq(20, 100, by = 10)
-dip_control_naive <- simulate_dip_control(engine, N = n_sequence, iterations = 200)
+dip_control_naive <- simulate_dip_control(engine, N = n_sequence, iterations = 100)
 ```
 
 ```{r}
@@ -821,7 +832,7 @@ plot_baseline_profile <- function(results_df, line_color, plot_title, plot_subti
       x = "Anomaly Threshold",
       y = y_label
     ) +
-    theme_minimal(base_size = 12) +
+    theme_minimal(base_size = 11) +
     theme(
       plot.title = element_text(face = "bold"),
       panel.grid.minor = element_blank()
@@ -836,7 +847,7 @@ plot_baseline_profile <- function(results_df, line_color, plot_title, plot_subti
 #| code-summary: "Plot Call Code"
 #| message: false
 #| warning: false
-#| fig-width: 8
+#| fig-width: 7
 #| fig-height: 5
 #| fig-cap: "Simulated control bounds for Hartigan's Dip Statistic (D). The irregular spacing on the x-axis reflects evaluating the threshold at discrete anomaly counts (N = 20 to 100)."
 
@@ -870,7 +881,7 @@ library(purrr)
 library(dplyr)
 
 # Run the LID Monte Carlo simulation across the same n_sequence
-lid_results_naive <- simulate_lid_control(engine, N = n_sequence, iterations = 200)
+lid_results_naive <- simulate_lid_control(engine, N = n_sequence, iterations = 100)
 ```
 
 ```{r}
@@ -880,7 +891,7 @@ lid_results_naive <- simulate_lid_control(engine, N = n_sequence, iterations = 2
 #| code-summary: "Plot Call Code"
 #| message: false
 #| warning: false
-#| fig-width: 8
+#| fig-width: 7
 #| fig-height: 5
 #| fig-cap: "Simulated control bounds for Local Intrinsic Dimensionality (LID)."
 
@@ -1053,9 +1064,9 @@ plot_medoid_trajectories <- function(medoid_engine, plot_title, plot_subtitle, l
 #| code-summary: "Plot Call Code"
 #| message: false
 #| warning: false
-#| fig-width: 10
+#| fig-width: 7
 #| fig-height: 10
-#| fig-cap: "Multivariate time-course trajectories for the two extracted HVAC fault archetypes at anomaly threshold $T=0.6534$. The physical window spans from two hours before to two hours after the detected anomaly timestamp (dashed vertical line)." 
+#| fig-cap: "Multivariate time-course trajectories for the two extracted HVAC fault archetypes at the maximum Hartigan's D. The physical window spans from two hours before to two hours after the detected anomaly timestamp (dashed vertical line)." 
 
 # Visualization
 fig_medoids_naive <- plot_medoid_trajectories(
@@ -1068,62 +1079,13 @@ print(fig_medoids_naive)
 ```
 
 
-@fig-naive-medoids-plot shows that targeting the maximum distance heterogeneity with $D$ isolated two distinct physical faults. To properly interpret these faults under the naive configuration, we must look only at the anchor points at $t=0$, as these represent the only data the clustering algorithm evaluated.
+@fig-naive-medoids shows that targeting the maximum distance heterogeneity with $D$ isolated two distinct physical faults. To properly interpret these faults under the naive configuration, we must look only at the anchor points at $t=0$, as these represent the only data the clustering algorithm evaluated.
 
 - **Archetype 1** is characterized at $t=0$ by an actively running system in a warm, humid external environment (high T Outdoor and Rh Outdoor). The system is consuming Power and Energy, and the internal variables reflect an active cooling state with relatively moderate supply and return temperatures. The system might not be able to sufficiently cool the building at this anomaly timestamp.
 - **Archetype 2** represents a different state. At $t=0$, the active Power reading sits exactly at zero in a cool, dry external environment. Despite these cooler ambient conditions, the internal temperatures (T Supply, T Return, T Saturation) are anomalously hot—significantly higher than those in Archetype 1. 
 
 
 In conclusion, targeting the peak of Hartigan's $D$ maximized the distance between an actively powered, internally cool system operating in a warm environment, and an unpowered, internally hot system sitting in a cool environment.
-
-We next illustrate the use of LID by extracting medoids at its lowest value.
-
-
-```{r}
-#| label: lid-medoids-extraction
-#| eval: true
-#| code-fold: show
-#| code-summary: "Show Medoids Extraction (Min LID)"
-#| message: false
-#| warning: false
-
-# Target the threshold where Local Intrinsic Dimensionality (LID) is minimized
-th_minLID_naive <- stability_curve_naive$Threshold[which.min(stability_curve_naive$Global_LID)]
-
-# The optimal k will be automatically chosen (expected k=3 based on stability profile)
-engine <- extract_medoids(engine, threshold = th_minLID_naive, k = NULL)
-```
-
-```{r}
-#| label: fig-lid-medoids-plot
-#| eval: true
-#| echo: true
-#| message: false
-#| warning: false
-#| fig-width: 12
-#| fig-height: 12
-#| fig-cap: "Multivariate time-course trajectories for the three extracted HVAC fault archetypes at the minimum LID threshold. The physical window spans from two hours before to two hours after the detected anomaly timestamp (dashed vertical line)."
-
-# Call the plotting wrapper on the extracted medoids
-fig_lid_medoids <- plot_medoid_trajectories(
-  engine, 
-  plot_title = "Multivariate Trajectories of HVAC Faults (Naive Configuration, Minimum LID)",
-  plot_subtitle = "Archetypes extracted at the threshold of maximum variable coupling",
-  label_style = "alpha"
-)
-
-print(fig_lid_medoids)
-```
-
-@fig-lid-medoids-plot illustrates the concept of clustering fragmentation which happens here at the minimum LID. Archetype B mirrors the previous Archetype 1. At $t=0$, the system is actively running at high power (Power $\approx 6$) with moderate internal temperatures.
-
-Archetypes A and C are merely deviants of this same active state. While their instantaneous Power readings fluctuate at $t=0$ (dropping to $\approx 3$ in A, and $\approx 0$ in C), their internal thermodynamic states remain cool.
-
-Also, the previous Archetype 2, characterized by an unpowered state and a spike in internal temperatures to $>25^\circ C$) is now missing. This shows that the large anomaly threshold required to minimize LID filtered out the fault represented by archetype 2. 
-
-Now, @fig-naive-medoids-plot shows that, while it is not at its global minimum at T = 0.653 ($k=2$), LID is there at a visible local minimum. This is in agreement with the hypothesis of low LID being a good indicator of a fault.
-
-Lastly, when fragmentation is suspected to be occuring in clustering, optional argument `k` can be utilized in method `extract_medoids` to perform a higher tree cut.
 
 ## 4 Engineering Features for the Turin HVAC dataset
 
@@ -1134,8 +1096,9 @@ Raw sensor channels are static: each observation records the state of the system
 #| warning: false
 #| message: false
 #| echo: true
-#| fig-width: 10
-#| fig-height: 12
+#| dev: "jpeg"
+#| fig-width: 8
+#| fig-height: 9
 #| fig-cap: "1-Week Time Course of All System Variables"
 
 library(dplyr)
@@ -1428,7 +1391,7 @@ mode_stats <- mode_runs_df |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 10
+#| fig-width: 8
 #| fig-height: 6
 #| fig-cap: "Distribution of continuous dwell times (in hours) spent in Low, Medium, and High operating modes for Energy and Power."
 
@@ -1556,8 +1519,8 @@ tail_stats <- scores_24_30 |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 9
-#| fig-height: 9
+#| fig-width: 8
+#| fig-height: 8
 #| fig-cap: "Comparison of Isolation Forest anomaly score distributions for the 24-feature core configuration versus the 30-feature configuration (+6 mode dwell-time counters). Top: Full score density overlay showing probability mass shifting from the right tail (>= 0.50) into the 0.35-0.42 bulk. Bottom: Upper-tail histograms (Score >= 0.50) on an identical y-axis."
 
 library(ggplot2)
@@ -1640,8 +1603,15 @@ dwell_cols <- c(
 )
 
 mat_30  <- as.matrix(df_comp[, vars_30])
-n_cores <- max(1L, parallel::detectCores() - 1L)
 
+chk <- Sys.getenv("_R_CHECK_LIMIT_CORES_", "")
+n_cores <- if (.Platform$OS.type == "windows") {
+  1L
+} else if (nzchar(chk) && chk != "FALSE") {
+  2L
+} else {
+  min(4L, max(1L, parallel::detectCores() - 1L))
+}
 # 2. Evaluate the actual 24-feature core configuration (ntrees = 500, seed = 42)
 iso_core <- isolation.forest(
   mat_30[, vars_24], ntrees = 500, sample_size = 256,
@@ -1650,8 +1620,8 @@ iso_core <- isolation.forest(
 scores_core      <- predict(iso_core, mat_30[, vars_24], nthreads = 1L)
 obs_tail_mass_50 <- mean(scores_core >= 0.50)
 
-# 3. Generate M = 200 unconditional random 24-feature subsets (for Panel A & p-value)
-M <- 200L
+# 3. Generate M = 100 unconditional random 24-feature subsets (for Panel A & p-value)
+M <- 100L
 set.seed(2026)
 uncond_subsets <- lapply(seq_len(M), function(i) {
   sample(vars_30, size = 24, replace = FALSE)
@@ -1714,8 +1684,8 @@ core_point_df <- tibble(
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 10
-#| fig-height: 5
+#| fig-width: 8
+#| fig-height: 4
 #| fig-cap: "Monte Carlo permutation distribution of upper-tail probability mass P(Score >= 0.50) across random subsets of 24 features drawn without replacement from the 30-feature pool (ntrees = 500). Left: Unconditional null distribution of 200 random 24-feature subsets versus the actual 24-feature core configuration (dashed orange-red line). Right: Stepwise dilution of upper-tail mass across all mode dwell-time counter counts k in {0, ..., 6}."
 
 library(ggplot2)
@@ -1822,8 +1792,8 @@ outdoor_features <- hvac_valid |>
 #| message: false
 #| code-summary: "Plot Code"
 #| echo: false
-#| fig-width: 10
-#| fig-height: 8
+#| fig-width: 8
+#| fig-height: 6
 #| fig-cap: "Distributions of raw values and 15-minute changes for outdoor relative humidity (left) and temperature (right). The narrow distributions of the changes highlight the slow, continuous nature of environmental shifts."
 
 library(ggplot2)
@@ -1910,8 +1880,8 @@ t_ret_long <- t_return_eda |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 8
-#| fig-height: 8
+#| fig-width: 7
+#| fig-height: 7
 #| fig-cap: "Distributions of raw values and temporal derivatives for return temperature across the full dataset."
 
 library(ggplot2)
@@ -1973,8 +1943,8 @@ anno_df <- run_df |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 8
-#| fig-height: 8
+#| fig-width: 7
+#| fig-height: 7
 #| fig-cap: "Histogram of continuous heating and cooling durations, calculated using Run Length Encoding on the sign of the 15-minute derivative."
 
 library(ggplot2)
@@ -2067,8 +2037,8 @@ gaps_long <- gaps_eda |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 8
-#| fig-height: 8
+#| fig-width: 7
+#| fig-height: 7
 #| fig-cap: "Distributions of the Control Error (top) and Supply Delta (bottom). The Supply Delta captures the operational states: idling (the central spike at zero), active cooling (the left tail), active heating (the right mound), and extreme mechanical anomalies (the distant outliers)."
 
 library(ggplot2)
@@ -2135,8 +2105,8 @@ anno_df <- run_df |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 8
-#| fig-height: 8
+#| fig-width: 7
+#| fig-height: 7
 #| fig-cap: "Histogram of continuous heating and cooling durations for supply air."
 
 library(ggplot2)
@@ -2231,8 +2201,8 @@ moisture_long <- moisture_gaps_eda |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 8
-#| fig-height: 10
+#| fig-width: 6
+#| fig-height: 8
 #| fig-cap: "Distributions of the engineered moisture gaps: Humidity Delta, Supply Margin, and Return Margin."
 
 library(ggplot2)
@@ -2334,8 +2304,8 @@ anno_df <- all_runs |>
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 10
-#| fig-height: 8
+#| fig-width: 8
+#| fig-height: 6
 #| fig-cap: "Histograms of consecutive continuous ramping durations for the engineered moisture gaps."
 
 library(ggplot2)
@@ -2516,8 +2486,8 @@ We then plot the profiles using the [previously defined wrapper](#stability-ggpl
 #| echo: true
 #| code-summary: "Plot Code"
 #| fig-cap: "Diagnostic scores across anomaly thresholds (20 <= N <= 800)."
-#| fig-height: 12
-#| fig-width: 9
+#| fig-height: 9
+#| fig-width: 7
 #| warning: false
 #| message: false
 
@@ -2545,8 +2515,8 @@ As done with the naive configuration, we verify that the observed $D$ and LID va
 #| warning: false
 
 # Generate control quantiles using the engineered engine
-lid_control_engineered <- simulate_lid_control(engine_baseline, N = n_sequence, iterations = 200)
-dip_control_engineered <- simulate_dip_control(engine_baseline, N = n_sequence, iterations = 200)
+lid_control_engineered <- simulate_lid_control(engine_baseline, N = n_sequence, iterations = 100)
+dip_control_engineered <- simulate_dip_control(engine_baseline, N = n_sequence, iterations = 100)
 ```
 
 ```{r}
@@ -2556,7 +2526,7 @@ dip_control_engineered <- simulate_dip_control(engine_baseline, N = n_sequence, 
 #| code-summary: "Plot Code"
 #| message: false
 #| warning: false
-#| fig-width: 10
+#| fig-width: 7
 #| fig-height: 5
 #| fig-cap: "Simulated control bounds for Hartigan's D applied to the engineered feature matrix."
 
@@ -2577,7 +2547,7 @@ print(fig_dip_null_eng)
 #| code-summary: "Plot Code"
 #| message: false
 #| warning: false
-#| fig-width: 10
+#| fig-width: 7
 #| fig-height: 5
 #| fig-cap: "Simulated control bounds for LID applied to the engineered feature matrix."
 
@@ -2628,8 +2598,8 @@ Next, we plot the trajectories of the four medoids using the [previously defined
 #| echo: true
 #| code-summary: "Plot Code"
 #| fig-cap: "Time course of the four anomaly archetypes extracted at T = 0.60."
-#| fig-height: 14
-#| fig-width: 10
+#| fig-height: 10
+#| fig-width: 8
 #| warning: false
 #| message: false
 
@@ -2819,6 +2789,8 @@ cumulative_ledger <- baseline_ledger |>
 #| echo: true
 #| code-summary: "Plot Code"
 #| fig-cap: "Cumulative frequency of the four fault archetypes across the baseline period."
+#| fig-width: 6
+#| fig-height: 6
 #| message: false
 #| warning: false
 
@@ -2876,6 +2848,8 @@ scatter_data <- baseline_ledger |>
 ```{r}
 #| label: fig-date-time-scatter
 #| echo: true
+#| fig-width: 9
+#| fig-height: 6
 #| code-summary: "Plot Code"
 #| fig-cap: "Occurrence dates and times of day for each fault archetype."
 #| message: false
@@ -2947,7 +2921,7 @@ routed_archetypes <- subset(routed_timeline, archetype_bucket != "Background")
 #| code-summary: "Plot Code"
 #| message: false
 #| warning: false
-#| fig-width: 9
+#| fig-width: 8
 #| fig-height: 6
 #| fig-cap: "Temporal evolution of anomaly scores for all observations falling within each archetype's cluster radius. The red dashed line marks the T = 0.60 threshold; solid black lines and grey bands represent Generalized Additive Model (GAM) smoothers and their 95% confidence intervals."
 
@@ -3125,8 +3099,8 @@ context_vars <- get_features(engine_novel)$context_variables
 #| code-summary: "Plot Code"
 #| message: false
 #| warning: false
-#| fig-height: 14
-#| fig-width: 10
+#| fig-height: 10
+#| fig-width: 8
 #| fig-cap: "Time-course trajectories of the context variables for the four novel anomaly sub-clusters extracted from the streaming telemetry."
 
 fig_novel_medoids <- plot_medoid_trajectories(
@@ -3165,8 +3139,8 @@ novel_ablation_results <- ablate_features(engine_novel)
 #| code-summary: "Plot Code"
 #| message: false
 #| warning: false
-#| fig-height: 8
-#| fig-width: 10
+#| fig-height: 6
+#| fig-width: 8
 #| fig-cap: "Top 5 engineered features driving the anomaly score for each novel sub-cluster medoid, ranked by LOCO ablation."
 
 fig_novel_ablation <- plot_ablation_importance(
@@ -3203,3 +3177,7 @@ As illustrated in this vignette, `isoRouting` provides a structured S4 framework
 - **Archetype Extraction and Feature Attribution:** `extract_medoids()` isolates representative fault trajectories (@fig-engineered-comprehensive-medoids), and `commit_ledger()` records all above-threshold occurrences alongside their distances to each medoid. To explain why specific medoids receive high anomaly scores, `ablate_features()` performs Leave-One-Covariate-Out (LOCO) ablation, ranking target variables by their score contribution (@fig-ablation-results, @fig-novel-ablation).
 - **Sub-Threshold Tracking and Online Stream Routing:** Because the committed `DiagnosticEngine` caches cluster radii (`@cluster_radii`) and medoid leaf-node signatures (`@baseline_signatures`), it can classify additional data without retraining the Isolation Forest. `route_time_course()` maps sub-threshold precursors across historical data (@fig-routed-timeline), while `predict_stream()` routes incoming observations into known clusters, background operation, or novel anomalies (@tbl-predict-stream). Finally, `isolate_novel_anomalies()` branches a new `DiagnosticEngine` object onto rejected novel events so they can be sub-clustered and analyzed with the exact same plotting and ablation methods (@tbl-novel-subclusters, @fig-novel-medoids-trajectories).
 
+## References {.unnumbered}
+
+::: {#refs}
+:::

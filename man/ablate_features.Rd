@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{ablate_features}
 \alias{ablate_features}
+\alias{ablate_features,DiagnosticEngine-method}
 \title{Ablate Features for Medoid Interpretation}
 \usage{
 ablate_features(object)
+
+\S4method{ablate_features}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object (must have extracted medoids).}

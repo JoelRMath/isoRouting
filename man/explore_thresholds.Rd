@@ -2,9 +2,17 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{explore_thresholds}
 \alias{explore_thresholds}
+\alias{explore_thresholds,DiagnosticEngine-method}
 \title{Explore Anomaly Thresholds}
 \usage{
 explore_thresholds(
+  object,
+  thresholds = seq(0.5, 0.8, by = 0.01),
+  ntrees = NULL,
+  sample_size = NULL
+)
+
+\S4method{explore_thresholds}{DiagnosticEngine}(
   object,
   thresholds = seq(0.5, 0.8, by = 0.01),
   ntrees = NULL,

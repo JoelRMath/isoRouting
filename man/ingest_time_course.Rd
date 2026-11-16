@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{ingest_time_course}
 \alias{ingest_time_course}
+\alias{ingest_time_course,DiagnosticEngine-method}
 \title{Ingest Time Course Data}
 \usage{
 ingest_time_course(object, data, tolerance = NULL)
+
+\S4method{ingest_time_course}{DiagnosticEngine}(object, data, tolerance = NULL)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

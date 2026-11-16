@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{get_scored_time_course}
 \alias{get_scored_time_course}
+\alias{get_scored_time_course,DiagnosticEngine-method}
 \title{Get Scored Time Course}
 \usage{
 get_scored_time_course(object)
+
+\S4method{get_scored_time_course}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

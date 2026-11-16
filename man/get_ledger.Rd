@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{get_ledger}
 \alias{get_ledger}
+\alias{get_ledger,DiagnosticEngine-method}
 \title{Get Forensic Ledger}
 \usage{
 get_ledger(object)
+
+\S4method{get_ledger}{DiagnosticEngine}(object)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

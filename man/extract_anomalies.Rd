@@ -2,9 +2,12 @@
 % Please edit documentation in R/DiagnosticEngine.R
 \name{extract_anomalies}
 \alias{extract_anomalies}
+\alias{extract_anomalies,DiagnosticEngine-method}
 \title{Extract Anomalies via Isolation Forest}
 \usage{
 extract_anomalies(object, threshold)
+
+\S4method{extract_anomalies}{DiagnosticEngine}(object, threshold)
 }
 \arguments{
 \item{object}{A DiagnosticEngine object.}

@@ -6,6 +6,18 @@
 \usage{
 simulate_lid_control(engine, N, iterations = 200, k = 5)
 }
+\arguments{
+\item{engine}{A \code{DiagnosticEngine} object with an ingested time course.}
+
+\item{N}{Integer vector of sample sizes to evaluate.}
+
+\item{iterations}{Integer. Number of Monte Carlo iterations (default 200).}
+
+\item{k}{Integer. Number of nearest neighbors for LID estimation (default 5).}
+}
+\value{
+A \code{data.frame} containing simulated LID quantiles and score thresholds across \code{N}.
+}
 \description{
-Simulate Control Quantiles for Local Intrinsic Dimensionality (LID)
+Generates Monte Carlo null distribution quantiles for Local Intrinsic Dimensionality across sample sizes.
 }

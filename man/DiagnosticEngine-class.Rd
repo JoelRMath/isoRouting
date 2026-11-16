@@ -3,7 +3,18 @@
 \docType{class}
 \name{DiagnosticEngine-class}
 \alias{DiagnosticEngine-class}
+\alias{initialize,DiagnosticEngine-method}
 \title{DiagnosticEngine Class}
+\usage{
+\S4method{initialize}{DiagnosticEngine}(.Object, config_path, ...)
+}
+\arguments{
+\item{.Object}{The prototype \code{DiagnosticEngine} instance being initialized.}
+
+\item{config_path}{Character. Path to the YAML configuration file.}
+
+\item{...}{Additional slot arguments passed to the default S4 initializer.}
+}
 \description{
 A stateful S4 class that acts as a deterministic forensic and predictive engine for
 multivariate time series. It utilizes Isolation Forests to extract extreme
