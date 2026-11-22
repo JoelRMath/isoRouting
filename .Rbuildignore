@@ -11,3 +11,4 @@
 ^data-raw$
 ^manuscript$
 ^cran-comments\.md$
+^CRAN-SUBMISSION$
