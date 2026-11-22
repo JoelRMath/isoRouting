@@ -10,7 +10,7 @@ Description: Provides a deterministic routing engine for multivariate time serie
     Intrinsic Dimensionality, extract representative medoids, and route streaming
     data into known or novel anomaly archetypes.
 License: MIT + file LICENSE
-URL: https://github.com/joelRMath/isoRouting
+URL: https://github.com/joelRMath/isoRouting, https://joelrmath.github.io/isoRouting/
 BugReports: https://github.com/joelRMath/isoRouting/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

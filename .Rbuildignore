@@ -12,3 +12,6 @@
 ^manuscript$
 ^cran-comments\.md$
 ^CRAN-SUBMISSION$
+^docs$
+^pkgdown$
+^\.github$
