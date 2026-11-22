@@ -2,13 +2,21 @@ Package: isoRouting
 Title: Diagnostic Engine for Multivariate Time Series
 Version: 0.1.0
 Authors@R: person("Joël R.", "Pradines", email = "joel.pradines@gmail.com", role = c("aut", "cre"))
-Description: Provides a deterministic routing engine for multivariate time series anomaly detection. By extracting terminal node topology from Isolation Forests, the package bypasses Euclidean scaling artifacts to cluster anomalies using Hamming distance and hierarchical division. It includes methods to calibrate cluster integrity, extract topological medoids, and route streaming data into established historical archetypes.
+Description: Provides a deterministic routing engine for multivariate time series
+    anomaly detection. By extracting terminal leaf memberships from Isolation Forests
+    (Liu et al., 2008 <doi:10.1109/ICDM.2008.17>), it clusters anomalies using
+    scale-free Hamming distances and divisive hierarchical clustering. Includes
+    methods to calibrate anomaly thresholds via Hartigan's Dip statistic and Local
+    Intrinsic Dimensionality, extract representative medoids, and route streaming
+    data into known or novel anomaly archetypes.
 License: MIT + file LICENSE
+URL: https://github.com/joelRMath/isoRouting
+BugReports: https://github.com/joelRMath/isoRouting/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
 Depends: 
-    R (>= 3.5)
+    R (>= 4.1.0)
 Imports: 
     cluster,
     diptest,
@@ -30,6 +38,7 @@ Suggests:
     patchwork,
     quarto,
     scales,
+    parallel,
     testthat (>= 3.0.0),
     tidyr
 VignetteBuilder: quarto

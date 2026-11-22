@@ -46,3 +46,23 @@ to evaluate the structural stability of the clustering manifold. To optimize per
 a master distance matrix is computed once at \code{max_N} and instantaneously subsetted
 for higher thresholds.
 }
+\examples{
+set.seed(42)
+df <- data.frame(
+  timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+                         by = "hour", length.out = 100),
+  x1 = rnorm(100), x2 = rnorm(100)
+)
+df$x1[85:92] <- df$x1[85:92] + 8
+df$x1[93:100] <- df$x1[93:100] - 8
+cfg <- tempfile(fileext = ".yaml")
+yaml::write_yaml(list(
+  ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+  anomaly_threshold = 0.55, context_variables = list(),
+  target_variables = c("x1", "x2")
+), cfg)
+eng <- methods::new("DiagnosticEngine", config_path = cfg)
+eng <- ingest_time_course(eng, df)
+evaluate_k_stability(eng, max_N = 20, min_N = 10, nb_steps = 3, min_k = 2, max_k = 4)
+unlink(cfg)
+}

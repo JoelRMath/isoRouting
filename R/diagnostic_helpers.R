@@ -12,6 +12,18 @@
 #' @param seed Integer for reproducibility.
 #' 
 #' @return A tidy data.frame containing the Spearman correlation for each parameter combination.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(x1 = rnorm(100), x2 = rnorm(100))
+#' res <- assess_forest_stability(
+#'   data = df,
+#'   target_features = c("x1", "x2"),
+#'   tree_counts = c(10, 25),
+#'   sample_sizes = c(32, 64),
+#'   baseline_trees = 100,
+#'   seed = 42
+#' )
+#' print(res)
 #' @export
 assess_forest_stability <- function(data, 
                                     target_features, 
@@ -84,6 +96,14 @@ assess_forest_stability <- function(data,
 #' @param time_vector A POSIXct vector of timestamps.
 #' @param tolerance Numeric. Allowable variance in seconds (default 0).
 #' @return A list containing a boolean flag and a summary of intervals.
+#' @examples
+#' ts <- seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                  by = "hour", length.out = 10)
+#' check_time_continuity(ts)
+#'
+#' # Introduce a 5-hour gap
+#' ts_gap <- ts[-c(5:8)]
+#' check_time_continuity(ts_gap)
 #' @export
 check_time_continuity <- function(time_vector, tolerance = 0) {
   if (!inherits(time_vector, "POSIXt")) {
@@ -116,6 +136,13 @@ check_time_continuity <- function(time_vector, tolerance = 0) {
 #' @param k Integer. The number of nearest neighbors to evaluate (default: 5).
 #' @param eps Numeric. Small constant to prevent log(0) for topological duplicates.
 #' @return A list containing Global_LID, Min_Cluster_LID, and Max_Cluster_LID
+#' @examples
+#' set.seed(42)
+#' pts <- rbind(matrix(rnorm(30, mean = 0), ncol = 2),
+#'              matrix(rnorm(30, mean = 5), ncol = 2))
+#' d_mat <- as.matrix(stats::dist(pts))
+#' labels <- rep(c(1L, 2L), each = 15)
+#' compute_lid_profile(d_mat, cluster_labels = labels, k = 5)
 #' @export
 compute_lid_profile <- function(dist_mat, cluster_labels, k = 5, eps = 1e-8) {
   if (inherits(dist_mat, "dist")) dist_mat <- as.matrix(dist_mat)
@@ -157,6 +184,29 @@ compute_lid_profile <- function(dist_mat, cluster_labels, k = 5, eps = 1e-8) {
 #' @param iterations Integer. Number of Monte Carlo iterations (default 200).
 #' @param k Integer. Number of nearest neighbors for LID estimation (default 5).
 #' @return A \code{data.frame} containing simulated LID quantiles and score thresholds across \code{N}.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100),
+#'   x2 = rnorm(100)
+#' )
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20,
+#'   sample_size = 32,
+#'   temporal_window_hours = 2,
+#'   anomaly_threshold = 0.60,
+#'   context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#'
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' lid_ctrl <- simulate_lid_control(eng, N = c(10, 20), iterations = 10, k = 5)
+#' print(lid_ctrl)
+#' unlink(cfg)
 #' @export
 simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
   features <- engine@feature_matrix
@@ -244,6 +294,29 @@ simulate_lid_control <- function(engine, N, iterations = 200, k = 5) {
 #' @param N Integer vector of sample sizes to evaluate.
 #' @param iterations Integer. Number of Monte Carlo iterations (default 200).
 #' @return A \code{data.frame} containing simulated Hartigan's dip quantiles and score thresholds across \code{N}.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100),
+#'   x2 = rnorm(100)
+#' )
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20,
+#'   sample_size = 32,
+#'   temporal_window_hours = 2,
+#'   anomaly_threshold = 0.60,
+#'   context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#'
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' dip_ctrl <- simulate_dip_control(eng, N = c(10, 20), iterations = 10)
+#' print(dip_ctrl)
+#' unlink(cfg)
 #' @export
 simulate_dip_control <- function(object, N, iterations = 200) {
   features <- object@feature_matrix
@@ -321,6 +394,13 @@ simulate_dip_control <- function(object, N, iterations = 200) {
 #' multimodality (clustering tendency). 
 #' @param dist_mat An N x N distance matrix or a native R `dist` object.
 #' @return A numeric value representing the dip statistic, or NA_real_ if the sample size is too small.
+#' @examples
+#' set.seed(42)
+#' # Bimodal synthetic clusters
+#' pts <- rbind(matrix(rnorm(30, mean = 0), ncol = 2),
+#'              matrix(rnorm(30, mean = 5), ncol = 2))
+#' d_mat <- stats::dist(pts)
+#' compute_dip_statistic(d_mat)
 #' @export
 compute_dip_statistic <- function(dist_mat) {
   # Optimize extraction: 'dist' objects are inherently flattened triangle vectors

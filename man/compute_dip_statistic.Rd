@@ -16,3 +16,11 @@ A numeric value representing the dip statistic, or NA_real_ if the sample size i
 Evaluates the pairwise distance distribution of a manifold to test for structural
 multimodality (clustering tendency).
 }
+\examples{
+set.seed(42)
+# Bimodal synthetic clusters
+pts <- rbind(matrix(rnorm(30, mean = 0), ncol = 2),
+             matrix(rnorm(30, mean = 5), ncol = 2))
+d_mat <- stats::dist(pts)
+compute_dip_statistic(d_mat)
+}

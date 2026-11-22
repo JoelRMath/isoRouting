@@ -21,3 +21,11 @@ A list containing Global_LID, Min_Cluster_LID, and Max_Cluster_LID
 \description{
 Compute Local Intrinsic Dimensionality (LID) Profile
 }
+\examples{
+set.seed(42)
+pts <- rbind(matrix(rnorm(30, mean = 0), ncol = 2),
+             matrix(rnorm(30, mean = 5), ncol = 2))
+d_mat <- as.matrix(stats::dist(pts))
+labels <- rep(c(1L, 2L), each = 15)
+compute_lid_profile(d_mat, cluster_labels = labels, k = 5)
+}

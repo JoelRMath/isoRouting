@@ -17,3 +17,12 @@ A list containing a boolean flag and a summary of intervals.
 \description{
 Detect gaps or irregular intervals in a time series
 }
+\examples{
+ts <- seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+                 by = "hour", length.out = 10)
+check_time_continuity(ts)
+
+# Introduce a 5-hour gap
+ts_gap <- ts[-c(5:8)]
+check_time_continuity(ts_gap)
+}

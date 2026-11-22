@@ -30,3 +30,38 @@ distances using the frozen baseline forest, calibrates the optimal number of nov
 sub-clusters via DIANA and Global Silhouette, extracts +/- window medoids, and commits
 a forensic ledger of the novel archetypes.
 }
+\examples{
+set.seed(42)
+df <- data.frame(
+  timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+                         by = "hour", length.out = 100),
+  x1 = rnorm(100), x2 = rnorm(100)
+)
+df$x1[85:92] <- df$x1[85:92] + 8
+df$x1[93:100] <- df$x1[93:100] - 8
+cfg <- tempfile(fileext = ".yaml")
+yaml::write_yaml(list(
+  ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+  anomaly_threshold = 0.50, context_variables = list(),
+  target_variables = c("x1", "x2")
+), cfg)
+eng <- methods::new("DiagnosticEngine", config_path = cfg)
+eng <- ingest_time_course(eng, df)
+eng <- extract_medoids(eng, N = 14, k = 2)
+eng <- commit_ledger(eng, k = 2)
+
+# New stream with a novel anomaly mode along x2
+new_df <- data.frame(
+  timestamp = seq.POSIXt(as.POSIXct("2025-01-06 00:00:00", tz = "UTC"),
+                         by = "hour", length.out = 30),
+  x1 = rnorm(30), x2 = rnorm(30)
+)
+new_df$x2[20:28] <- new_df$x2[20:28] + 10
+
+routed <- predict_stream(eng, new_df)
+if (sum(routed$predicted_state == "Novel Anomaly") >= 3) {
+  novel_eng <- isolate_novel_anomalies(eng, routed, min_k = 2, max_k = 3, k = 2)
+  head(get_ledger(novel_eng))
+}
+unlink(cfg)
+}

@@ -47,5 +47,10 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
-docs
 data-raw/*.csv
+
+# Quarto/knitr intermediate figure folders
+vignettes/*_files/
+
+# macOS Finder metadata
+.DS_Store

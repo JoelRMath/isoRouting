@@ -50,13 +50,24 @@ knitr::knit_hooks$set(pngquant = knitr::hook_pngquant)
 if (nzchar(Sys.which("pngquant"))) {
   knitr::opts_chunk$set(pngquant = "--speed=1 --quality=65-80")
 }
+
+knitr::opts_chunk$set(time_it = TRUE)
 ```
 
-## 1 Need for a Package Handling Complex Variable Dependencies in Multivariate Time Series
+## 1 From Multivariate Time Series to Anomaly Routing
 
-Building predictive diagnostic models for multivariate time series often begins with feature selection. A standard machine learning reflex is to compute a linear correlation matrix to identify and drop redundant variables. While useful for simple stochastic processes, this linear assumption frequently breaks down in physical domains.
+Analyzing multivariate time series from physical and industrial systems requires distinguishing true operational faults from routine dynamic shifts across multiple coupled sensors. Turning raw sensor streams into actionable diagnostics faces two fundamental hurdles: 
 
-In industrial Internet of Things (IoT) environments, for example, variables are governed by causal, closed-loop mechanics. To illustrate this, we load the `hvac_features` dataset (Turin HVAC telemetry [@borda2022development]) provided with `isoRouting` and examine the linear correlation across its 10 telemetry channels.
+- **Geometric complexity**: as variables interact nonlinearly across shifting operating regimes
+- **Computational scalability**: where calibrating alert thresholds, clustering fault modes, and routing live telemetry must execute rapidly across tens of thousands of time points. 
+
+`isoRouting` addresses both challenges within a unified S4 pipeline, bridging non-parametric anomaly isolation with fast, scale-free clustering, fault archetypes, threshold diagnostics and streaming fault triage.
+
+### 1.1 Need for Handling Complex Variable Dependencies
+
+Building predictive diagnostic models for multivariate time series begins with feature selection. A standard machine learning reflex is to compute a linear correlation matrix to identify and drop redundant variables. While useful for simple stochastic processes, this linear assumption frequently breaks down in physical domains.
+
+In industrial Internet of Things (IoT) environments, for example, variables are governed by causal, closed-loop mechanics. To illustrate this, we load the `hvac_features` dataset (Turin HVAC telemetry [@borda2022development]) provided with `isoRouting` and examine the linear correlation across its 10 telemetry channels over time (`timestamp`)
 
 
 ```{r}
@@ -74,9 +85,9 @@ library(isoRouting)
 data("hvac_features", package = "isoRouting")
 
 # Restrict to raw variables (the package data also contains engineered features)
-hvac_raw <- hvac_features |> 
+hvac_raw <- hvac_features |>
   select(
-    t_supply, t_return, sp_return, t_saturation, t_outdoor, 
+    t_supply, t_return, sp_return, t_saturation, t_outdoor,
     rh_supply, rh_return, rh_outdoor, energy, power
   )
 
@@ -108,8 +119,8 @@ ggcorrplot(
   lab = TRUE,              
   lab_size = 3.0,
   tl.cex = 11,
-  lab_col = "black",       
-  colors = c("#f8766d", "white", "#00bfc4"), 
+  lab_col = "black",      
+  colors = c("#f8766d", "white", "#00bfc4"),
   outline.color = "gray90",
   legend.title = "Correlation"
 ) +
@@ -132,7 +143,7 @@ Based on the heatmap one could be tempted to remove some variables with high cor
 #| dev: "jpeg"
 #| fig-width: 8
 #| fig-height: 8
-#| fig-cap: "Scatterplot matrix with correlation-mapped backgrounds (Sampled at n = 5000)"
+#| fig-cap: "Scatterplot matrix with correlation-mapped backgrounds (Sampled at n = 2,500)"
 
 library(GGally)
 
@@ -140,17 +151,17 @@ library(GGally)
 custom_scatter_bg <- function(data, mapping, ...) {
   x_data <- GGally::eval_data_col(data, mapping$x)
   y_data <- GGally::eval_data_col(data, mapping$y)
-  
+ 
   corr <- cor(x_data, y_data, use = "pairwise.complete.obs")
-  
-  color_fun <- colorRamp(c("#f8766d", "white", "#00bfc4")) 
-  scaled_corr <- (corr + 1) / 2 
-  
+ 
+  color_fun <- colorRamp(c("#f8766d", "white", "#00bfc4"))
+  scaled_corr <- (corr + 1) / 2
+ 
   rgb_vec <- color_fun(scaled_corr)
   hex_color <- rgb(rgb_vec[1], rgb_vec[2], rgb_vec[3], maxColorValue = 255)
-  
+ 
   ggplot(data, mapping) +
-    annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf, 
+    annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf,
              fill = hex_color, alpha = 0.4) +
     geom_point(...)
 }
@@ -158,7 +169,7 @@ custom_scatter_bg <- function(data, mapping, ...) {
 # 2. Generate the plot for a sample using the restricted raw data
 set.seed(42)
 p_pairs <- hvac_raw |>
-  sample_n(2500) |> 
+  sample_n(2000) |>
   ggpairs(
     lower = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
     upper = list(continuous = wrap(custom_scatter_bg, alpha = 0.1, size = 0.5)),
@@ -174,16 +185,42 @@ p_pairs <- hvac_raw |>
 p_pairs
 ```
 
-The scatterplot matrix shows that linear correlation is an inadequate measure here. Variables form distinct geometric manifolds, dense operational clusters, and hard boundaries dictated by mechanical limits and programmed setpoints.   
+The scatterplot matrix shows that linear correlation is an inadequate measure here: variables form nonlinear clusters, distinct operating modes, and hard boundaries dictated by mechanical limits and programmed setpoints. Explicitly modeling these dependencies with parametric methods would require a prohibitive expansion of interaction terms.
 
-Explicitly modeling these dependencies using traditional parametric methods requires a prohibitive expansion of interaction terms, quickly rendering models unmanageable.
+This geometric complexity is why `isoRouting` builds upon the **Isolation Forest** algorithm [@liu2008isolation]. Rather than modeling the intricate structure of normal operations, an Isolation Forest uses recursive random partitioning to isolate observations that fall outside dense operational regions.
 
-This geometric complexity is why `isoRouting` utilizes the Isolation Forest algorithm [@liu2008isolation]. Rather than attempting to explicitly model the dense, intricate topology of "normal" operations, the Isolation Forest uses non-Euclidean random partitioning to efficiently isolate anomalies that fall outside these manifolds.
+### 1.2 Why `isoRouting`? Fast Calibration, Fault Archetypes, and Streaming Triage
 
-To make anomaly detection actionable in an operations research context, isoRouting establishes a two-tiered diagnostic framework that decouples system explanation from operational alerting:
+While a standard Isolation Forest assigns an anomaly score $S(x) \in (0, 1)$ to every timestamp, a raw score vector leaves several operational questions unanswered:
 
-- **Archetype Discovery (Explaining Faults)**: By capturing a broad statistical substrate of anomalous time courses, the engine provides sufficient data density to map distinct operational manifolds. Clustering this substrate yields spatial medoids—the representative profiles of deviations from nominal variable interactions. Rather than classifying every point in this subset as a critical failure, these archetypes are used to map the distinct operating regions associated with anomalous behavior.
-- **Threshold Triggers (Alerting on Severity)**: Once underlying behavioral departures are established, a high anomaly score threshold governs active alerts. When an extreme alert fires, its proximity to a pre-computed medoid associates it with a known fault archetype, enabling rapid root-cause diagnosis or the flagging of novel anomalies.
+- **Feature Selection & Attribution:** *Which engineered features actively drive anomaly isolation, and which ones dilute the upper tail of anomaly scores?*
+- **Threshold Calibration:** *Where should we set the anomaly score cutoff?*
+- **Fault Mode Discovery & $k$-Selection:** *What distinct physical fault types, called archetypes, exist inside the anomalous tail, and how many clusters ($k$) are structurally stable?*
+- **Streaming Triage & Novelty Rejection:** *When new telemetry arrives, does an anomaly match a known historical archetype, or is it a novel failure mode?*
+- **Novelty Sub-Clustering:** *Among newly flagged unknown anomalies, are we seeing isolated spikes or distinct emerging archetypes?*
+
+`isoRouting` uses **the fitted Isolation Forest itself** as both the anomaly detector and the similarity engine—extracting terminal leaf memberships directly from the trees to keep every stage of exploration, clustering, and live routing fast:
+
+- **Fast Scoring & Feature Auditing:** Because each tree in an Isolation Forest (`isotree`) is grown on a small, fixed random subsample of observations (`sample_size`, $\psi = 256$) rather than the full time series of length $N$, tree construction scales as $\mathcal{O}(n_t \psi \log \psi)$ (where $n_t$ is the number of trees) and scoring scales linearly as $\mathcal{O}(N n_t \log \psi)$. This allows users to rapidly audit candidate feature sets via permutation or leave-one-out tail attribution without computational bottlenecks.
+- **Objective Threshold Calibration ($D$ and $\text{LID}$):** Rather than guessing a score cutoff, users can sweep candidate thresholds to rapidly generate diagnostic profiles for the resulting subset of $N_a$ threshold-induced anomalies ($N_a \ll N$):
+  - **Hartigan's Dip Statistic ($D$)** [@hartigan1985dip] tests pairwise tail distances for multimodality, indicating when the tail separates into distinct fault clusters.
+  - **Local Intrinsic Dimensionality ($\text{LID}$)** [@amsaleg2015estimating; @houle2017local] estimates the local degrees of freedom via $k$-nearest neighbor distances, identifying when anomalies collapse onto constrained mechanical trajectories ($\text{LID} \ll p$, where $p$ is the number of features) rather than diffuse background noise.
+  - Both measures are minimally sensitive to subset size $N_a$ (e.g., $D$ is a scale-free effect size), and their computational speed makes it practical to benchmark observed values against Monte Carlo null distributions.
+- **Scale-Free Clustering & Fault Archetypes (`compute_distances`):** Instead of comparing raw sensors with incompatible units, `isoRouting` extracts the $N_a \times n_t$ matrix of terminal leaf IDs from the forest and computes pairwise **Hamming distances** (the fraction of trees in which two points land in different leaves). Partitioning this scale-free distance matrix via divisive hierarchical clustering (**DIANA** [@kaufman1990finding]) splits broad anomalies into specific fault regimes and summarizes each cluster by its **medoid**—an actual historical observation that serves as the cluster's representative **archetype**.
+- **Fast Streaming Triage & Novelty Detection (`stream_telemetry`):** Incoming anomalies ($N_{\text{new}}$) are routed by comparing their leaf memberships solely against the $k$ cluster medoids in $\mathcal{O}(N_{\text{new}} k n_t)$ time. Points falling within a cluster's calibrated radius are labeled with that known archetype; points outside all $k$ radii are flagged as **novel anomalies** for further inspection and can be sub-clustered into emerging archetypes when warranted.
+
+@tbl-complexity summarizes the asymptotic time complexity across each stage of the `isoRouting` pipeline.
+
+| Pipeline Stage | S4 Method / Engine Step | Time Complexity |
+| :--- | :--- | :--- |
+| **Forest Fit & Scoring** | `ingest_time_course()` / `isotree` | $\mathcal{O}(n_t \psi \log \psi + N n_t \log \psi)$ |
+| **Feature Ranking (LOO)** | Leave-one-out tail attribution | $\mathcal{O}(p \cdot N n_t \log \psi)$ |
+| **Threshold Controls ($D$, $\text{LID}$)** | `simulate_dip_control()`, `simulate_lid_control()` | $\mathcal{O}(M \cdot N_a \log N_a)$ |
+| **Leaf Hamming Distances** | `compute_distances()` | $\mathcal{O}(N_a^2 n_t)$ |
+| **Divisive Clustering & Stability** | `evaluate_k_stability()` (DIANA) | $\mathcal{O}(B \cdot k N_a^2)$ |
+| **Streaming Triage** | `stream_telemetry()` | $\mathcal{O}(N_{\text{new}} n_t \log \psi + N_{\text{new}} k n_t)$ |
+
+: Computational complexity of the `isoRouting` workflow ($N$: series length; $N_a \ll N$: extracted tail anomalies; $n_t$: number of trees (`isotree`); $\psi$: subsample size (`isotree`); $p$: number of features; $k$: archetype clusters; $M, B$: Monte Carlo/bootstrap iterations; $N_{\text{new}}$: streaming points). {#tbl-complexity}
 
 ## 2 Engine Workflow
 
@@ -808,7 +845,7 @@ To verify whether these $D$ and LID values differ significantly from normal oper
 library(purrr)
 library(dplyr)
 
-n_sequence <- seq(20, 100, by = 10)
+n_sequence <- seq(20, 100, by = 20)
 dip_control_naive <- simulate_dip_control(engine, N = n_sequence, iterations = 100)
 ```
 
@@ -1160,7 +1197,7 @@ The following subsections examine the raw variable distributions and state trans
 #| label: fig-energy-power-mechanics
 #| warning: false
 #| message: false
-#| echo: false
+#| echo: true
 #| code-summary: "Code"
 #| fig-width: 10
 #| fig-height: 8
@@ -1589,7 +1626,6 @@ Now, the decrease in the anomaly score tail could be due to the dimension jump f
 #| warning: false
 #| message: false
 #| echo: true
-#| cache: true
 #| code-summary: "Data Preparation: Exact Monte Carlo 24-of-30 Feature Subset Permutation Test"
 
 library(dplyr)
@@ -1612,9 +1648,10 @@ n_cores <- if (.Platform$OS.type == "windows") {
 } else {
   min(4L, max(1L, parallel::detectCores() - 1L))
 }
-# 2. Evaluate the actual 24-feature core configuration (ntrees = 500, seed = 42)
+# 2. Evaluate the actual 24-feature core configuration (ntrees = 100, seed = 42)
+ntrees_mc <- 100L
 iso_core <- isolation.forest(
-  mat_30[, vars_24], ntrees = 500, sample_size = 256,
+  mat_30[, vars_24], ntrees = ntrees_mc, sample_size = 256,
   nthreads = 1L, seed = 42, missing_action = "fail"
 )
 scores_core      <- predict(iso_core, mat_30[, vars_24], nthreads = 1L)
@@ -1651,7 +1688,7 @@ mc_all <- parallel::mclapply(seq_along(all_subsets), function(i) {
   sub_mat      <- mat_30[, sampled_vars]
   
   iso_m <- isolation.forest(
-    sub_mat, ntrees = 500, sample_size = 256,
+    sub_mat, ntrees = ntrees_mc, sample_size = 256,
     nthreads = 1L, seed = 42, missing_action = "fail"
   )
   sc_m <- predict(iso_m, sub_mat, nthreads = 1L)
@@ -1684,9 +1721,9 @@ core_point_df <- tibble(
 #| message: false
 #| echo: true
 #| code-summary: "Plot Code"
-#| fig-width: 8
-#| fig-height: 4
-#| fig-cap: "Monte Carlo permutation distribution of upper-tail probability mass P(Score >= 0.50) across random subsets of 24 features drawn without replacement from the 30-feature pool (ntrees = 500). Left: Unconditional null distribution of 200 random 24-feature subsets versus the actual 24-feature core configuration (dashed orange-red line). Right: Stepwise dilution of upper-tail mass across all mode dwell-time counter counts k in {0, ..., 6}."
+#| fig-width: 9.5
+#| fig-height: 4.6
+#| fig-cap: "Monte Carlo permutation distribution of upper-tail probability mass P(Score >= 0.50) across random subsets of 24 features drawn without replacement from the 30-feature pool (ntrees = 100). Left: Unconditional null distribution of 100 random 24-feature subsets versus the actual 24-feature core configuration (dashed orange-red line). Right: Stepwise dilution of upper-tail mass across all mode dwell-time counter counts k in {0, ..., 6}, with k = 1, 2 supplemented by 15 stratified draws each."
 
 library(ggplot2)
 library(patchwork)
@@ -1701,18 +1738,23 @@ p_hist_mc <- ggplot(mc_uncond, aes(x = tail_mass_50 * 100)) +
     label = sprintf("Core 24 Set\n(%.2f%%, p = %.4f)", obs_tail_mass_50 * 100, p_val),
     hjust = 1.08, vjust = 1.4, fontface = "bold", color = "#D55E00", size = 3.5
   ) +
-  theme_bw(base_size = 12) +
+  theme_bw(base_size = 11) +
   labs(
     title    = "A. Null Distribution of Tail Mass (d = 24)",
-    subtitle = "200 random 24-of-30 subsets (ntrees = 500)",
-    x        = "Upper-Tail Mass: % with Score >= 0.50",
+    subtitle = sprintf("%d random 24-of-30 subsets (ntrees = %d)", M, ntrees_mc),
+    x        = "Upper-Tail Mass (% Score >= 0.50)",
     y        = "Number of Random Subsets"
   )
 
 # 2. Panel B: Stepwise Dilution by Number of Included Mode Dwell Counters (0 to 6)
 p_dwell_effect <- ggplot(mc_all, aes(x = n_dwell, y = tail_mass_50 * 100)) +
   geom_boxplot(fill = "#0072B2", alpha = 0.35, outlier.shape = NA, width = 0.5) +
-  geom_jitter(width = 0.15, alpha = 0.6, color = "#0072B2", size = 2) +
+  geom_jitter(aes(shape = unconditional), width = 0.15, alpha = 0.7, color = "#2C7BB6") +
+  scale_shape_manual(
+    values = c(`TRUE` = 16, `FALSE` = 2),
+    labels = c(`TRUE` = "Unconditional (Panel A)", `FALSE` = "Stratified (k = 1, 2)"),
+    name   = NULL
+  ) +
   geom_point(
     data = core_point_df,
     aes(x = n_dwell, y = tail_mass_50 * 100),
@@ -1725,15 +1767,18 @@ p_dwell_effect <- ggplot(mc_all, aes(x = n_dwell, y = tail_mass_50 * 100)) +
     hjust = -0.25, vjust = 0.5, fontface = "bold", color = "#D55E00", size = 3.4
   ) +
   scale_x_discrete(drop = FALSE) +
-  theme_bw(base_size = 12) +
+  theme_bw(base_size = 11) +
+  theme(legend.position = "bottom") +
   labs(
-    title    = "B. Impact of Included Mode Dwell Counters",
+    title    = "B. Impact of Mode Dwell Counters",
     subtitle = "Tail mass vs. dwell counter count at fixed d = 24",
-    x        = "Number of Mode Dwell Counters Included (d = 24)",
+    x        = "Mode Dwell Counters Included (d = 24)",
     y        = "Upper-Tail Mass (% Score >= 0.50)"
   )
 
-p_hist_mc | p_dwell_effect
+(p_hist_mc | p_dwell_effect) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
 ```
 
 As shown in Panel A, every unconditional random 24-feature combination places only $1.1\%$ to $4.0\%$ of observations in the high-score tail ($\text{Score} \ge 0.50$), whereas our core 24-feature set—the only combination with zero dwell-time counters—reaches $4.97\%$ ($p = 0.0050$). Panel B demonstrates a continuous, monotonic contraction across the entire range: the more dwell-time counters a 24-feature subset includes, the further the high-score tail shrinks, dropping from a median of $4.3\%$ when a single counter is included down to $1.8\%$ when all six are present.
@@ -1791,7 +1836,7 @@ outdoor_features <- hvac_valid |>
 #| warning: false
 #| message: false
 #| code-summary: "Plot Code"
-#| echo: false
+#| echo: true
 #| fig-width: 8
 #| fig-height: 6
 #| fig-cap: "Distributions of raw values and 15-minute changes for outdoor relative humidity (left) and temperature (right). The narrow distributions of the changes highlight the slow, continuous nature of environmental shifts."
@@ -2323,7 +2368,7 @@ ggplot(all_runs, aes(x = duration_hours, fill = state)) +
   scale_x_continuous(breaks = seq(0, 15, by = 1)) +
   theme_bw(base_size = 12) +
   labs(
-    title    = "EDA: Continuous Ramping Durations for Moisture Gaps",
+    title    = "Continuous Ramping Durations for Moisture Gaps",
     subtitle = "Histograms of consecutive increasing/decreasing trajectories",
     x        = "Continuous Duration (Hours)",
     y        = "Count of Occurrences"
@@ -2363,6 +2408,85 @@ The feature engineering phase transforms the raw sensor logs into a 24-dimension
 | **System Error & Thermal Effort** | `control_error`<br>`supply_delta`<br>`d_t_supply_15m`<br>`t_sup_run_length`<br>`t_sup_displacement` | $\text{t\_return}(t) - \text{sp\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_supply}(t-1)$<br>$j \times \text{direction}$<br>$\sum_{i=0}^{j-1} \Delta \text{t\_supply}_{15m}(t-i)$ |
 | **Moisture Gaps** | `humidity_delta`<br>`supply_margin`<br>`return_margin` | $\text{rh\_supply}(t) - \text{rh\_return}(t)$<br>$\text{t\_supply}(t) - \text{t\_saturation}(t)$<br>$\text{t\_return}(t) - \text{t\_saturation}(t)$ |
 | **Moisture Kinematics** <br>*(Where $x$ is each of the 3 moisture gaps)* | `d_x_15m`<br>`run_length_x`<br>`displacement_x` | $x(t) - x(t-1)$<br>$m \times \text{direction}$<br>$\sum_{i=0}^{m-1} \Delta x_{15m}(t-i)$ |
+
+### 4.7 Ranking Feature Contributions
+
+A valuable aspect of the `isoRouting` workflow is its computational speed. We can take advantage of this efficiency to rank the individual contribution of each of the 24 engineered features to the upper tail of the anomaly score distribution ($S \ge 0.50$). Specifically, we evaluate 24 leave-one-out subsets of 23 features each and compare their upper-tail probability mass against the 24-feature baseline (`obs_tail_mass_50`), categorizing each feature as follows:
+
+- **Positive contribution (Tail Driver):** If removing a feature causes the proportion of high anomaly scores to *drop* ($\mathbb{P}(S_{24} \ge 0.50) - \mathbb{P}(S_{-j} \ge 0.50) > 0$), that feature actively helps the forest isolate extreme behaviors.
+- **Negative contribution (Diluter):** If removing a feature causes the proportion of high scores to *increase* ($\mathbb{P}(S_{24} \ge 0.50) - \mathbb{P}(S_{-j} \ge 0.50) < 0$), that feature tends to compress the separation between anomalous and normal scores.
+
+```{r}
+#| label: prep-feature-ranking
+#| warning: false
+#| message: false
+#| echo: true
+#| code-summary: "Data Preparation: Leave-One-Out Feature Ranking (24 Subsets of 23 Features)"
+
+library(dplyr)
+library(isotree)
+library(parallel)
+
+mat_24 <- as.matrix(df_comp[, vars_24])
+
+# Fit a 500-tree forest on each of the 24 subsets of 23 features
+feature_rank_df <- parallel::mclapply(seq_along(vars_24), function(j) {
+  sub_mat_23 <- mat_24[, -j, drop = FALSE]
+  
+  iso_23 <- isolation.forest(
+    sub_mat_23, ntrees = 500, sample_size = 256,
+    nthreads = 1L, seed = 42, missing_action = "fail"
+  )
+  sc_23   <- predict(iso_23, sub_mat_23, nthreads = 1L)
+  tail_23 <- mean(sc_23 >= 0.50)
+  
+  tibble(
+    Feature      = vars_24[j],
+    tail_mass_23 = tail_23,
+    delta_tail   = obs_tail_mass_50 - tail_23,
+    Effect       = ifelse(obs_tail_mass_50 >= tail_23, "Tail Driver (+)", "Diluter (-)")
+  )
+}, mc.cores = n_cores) |> bind_rows()
+
+rm(mat_24)
+```
+
+```{r}
+#| label: fig-feature-ranking
+#| warning: false
+#| message: false
+#| echo: true
+#| fig-width: 7
+#| fig-height: 5.5
+#| code-summary: "Plot Code: Individual Feature Contributions to Upper-Tail Mass"
+#| fig-cap: "Change in upper-tail probability mass (P(S >= 0.50)) when each of the 24 features is removed one at a time."
+
+library(ggplot2)
+
+ggplot(feature_rank_df, aes(x = reorder(Feature, delta_tail), y = delta_tail, color = Effect)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_segment(aes(xend = Feature, y = 0, yend = delta_tail), linewidth = 0.8) +
+  geom_point(size = 2.4) +
+  coord_flip() +
+  scale_color_manual(values = c("Diluter (-)" = "#f8766d", "Tail Driver (+)" = "#00bfc4")) +
+  labs(
+    title = "Individual Feature Contributions to Upper-Tail Probability Mass",
+    subtitle = sprintf("Baseline 24-feature tail mass P(S >= 0.50) = %.4f", obs_tail_mass_50),
+    x = "Omitted Feature (23 Remaining)",
+    y = expression(Delta ~ "Tail Probability Mass: " ~ P(S[24] >= 0.50) - P(S[-j] >= 0.50)),
+    color = "Feature Role"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 11),
+    plot.subtitle = element_text(size = 9)
+  )
+```
+
+@fig-feature-ranking shows that 20 out of the 24 engineered features actively contribute to high anomaly scores in the baseline ensemble. This simple leave-one-out diagnostic illustrates how `isoRouting` can be used to quickly audit the marginal contribution of each candidate feature.
+
+Next, we proceed with the full set of 24 engineered features to extract and route anomaly archetypes.
 
 ## 5 Archetype Extraction with Engineered Features
 
@@ -3168,14 +3292,14 @@ Combining the trajectory profiles (@fig-novel-medoids-trajectories) with the LOC
 - **Novel Cluster 3 (Mechanical Cooling or Defrost Engagement):** A sharp `power` step-up is paired with an immediate drop in both `t_supply` and `t_saturation` ($19^\circ\text{C} \to 14^\circ\text{C}$) at a lower return setpoint (`sp_return` $\approx 19.5^\circ\text{C}$). Rather than a winter heating startup (Baseline Archetype 2), this could reflect compressor-driven cooling or a heat-pump defrost cycle that rapidly chills the coil below the return-air temperature (`d_return_margin_15m`, `displacement_return_margin`).
 - **Novel Cluster 4 (Latent Occupancy Load / Dehumidification Startup):** Preceded by a steady two-hour climb in `rh_return` ($18\% \to 27\%$) at a higher setpoint (`sp_return` $\approx 21.5^\circ\text{C}$), the unit powers on (`dw_power`), likely to address accumulated indoor moisture (`d_humidity_delta_15m`, `run_length_humidity_delta`), producing a milder drop in `t_supply` and `t_saturation` as moisture condenses across the coil.
 
-## 7 Summary
+## 7 Turin HVAC Case Study: Key Findings
 
-As illustrated in this vignette, `isoRouting` provides a structured S4 framework for unsupervised time-series fault discovery, archetype extraction, and online stream routing. 
+Applying the `isoRouting` pipeline to the Turin HVAC telemetry dataset demonstrated how an unsupervised Isolation Forest can be turned into an interpretable, end-to-end fault routing system. Across the pre-gap baseline and post-gap streaming periods, the analysis yielded four main findings:
 
-- **Decoupled Feature Engineering and Model Configuration:** While users must still compute domain-specific features in their data frame—and validate that added variables do not dilute the anomaly score tail (@fig-score-compression-24-vs-30, @fig-mc-feature-subset-control), `isoRouting` separates feature preparation from the downstream diagnostic code. Once candidate columns are present in the dataset, external YAML files control which variables are passed to the Isolation Forest (`target_variables`), which are retained for visualization (`context_variables`), and how the forest is parameterized. Testing different subsets of prepared features requires only passing a different YAML path to `new("DiagnosticEngine", config_path = ...)` without modifying the analysis script.
-- **Quantitative Threshold and Cluster Calibration:** Method `evaluate_k_stability()` helps choosing an anomaly score threshold (@fig-engineered-evaluate-stability). It computes global silhouette width, Hartigan's dip statistic ($D$), and Local Intrinsic Dimensionality (LID) across candidate thresholds. The companion methods `simulate_dip_control()` (@fig-engineered-control-dip) and `simulate_lid_control()` (@fig-engineered-control-lid) generate Monte Carlo null bounds to verify that distance multimodality and dimensional reductions exceed random sampling expectations.
-- **Archetype Extraction and Feature Attribution:** `extract_medoids()` isolates representative fault trajectories (@fig-engineered-comprehensive-medoids), and `commit_ledger()` records all above-threshold occurrences alongside their distances to each medoid. To explain why specific medoids receive high anomaly scores, `ablate_features()` performs Leave-One-Covariate-Out (LOCO) ablation, ranking target variables by their score contribution (@fig-ablation-results, @fig-novel-ablation).
-- **Sub-Threshold Tracking and Online Stream Routing:** Because the committed `DiagnosticEngine` caches cluster radii (`@cluster_radii`) and medoid leaf-node signatures (`@baseline_signatures`), it can classify additional data without retraining the Isolation Forest. `route_time_course()` maps sub-threshold precursors across historical data (@fig-routed-timeline), while `predict_stream()` routes incoming observations into known clusters, background operation, or novel anomalies (@tbl-predict-stream). Finally, `isolate_novel_anomalies()` branches a new `DiagnosticEngine` object onto rejected novel events so they can be sub-clustered and analyzed with the exact same plotting and ablation methods (@tbl-novel-subclusters, @fig-novel-medoids-trajectories).
+- **Feature Dilution vs. Signal Drivers:** Adding 6 mode-dwell counters to the 24 thermodynamic and control features compressed the upper tail of the anomaly score distribution rather than sharpening it (@fig-score-compression-24-vs-30, @fig-mc-feature-subset-control). A subsequent leave-one-out audit confirmed that 20 of the 24 retained features actively drive high anomaly scores (@fig-feature-ranking). Because forest scoring is fast and `DiagnosticEngine` decouples feature selection into external YAML files, auditing and swapping feature sets required no changes to the downstream pipeline.
+- **Validated Multimodal Fault Regimes:** On the pre-gap baseline telemetry, varying candidate anomaly thresholds revealed a clear operating regime where extracted anomalies separated into $k = 4$ distinct, low-dimensional clusters. `evaluate_k_stability()` (@fig-engineered-evaluate-stability) alongside the Monte Carlo null controls in `simulate_dip_control()` (@fig-engineered-control-dip) and `simulate_lid_control()` (@fig-engineered-control-lid) provided quantitative bounds to select both the score cutoff and the number of baseline clusters ($k$).
+- **Interpretable Physical Archetypes:** Partitioning the baseline tail by leaf-sharing Hamming distance summarized thousands of timestamps into a compact set of concrete historical trajectories (`extract_medoids()`, @fig-engineered-comprehensive-medoids) logged via `commit_ledger()`. Leave-One-Covariate-Out ablation (`ablate_features()`, @fig-ablation-results) linked each archetype directly to its driving physical channels—such as supply/return temperature displacements and control margins—turning abstract anomaly scores into actionable root-cause profiles.
+- **Precursor Tracking and Emerging Post-Gap Faults:** Caching the baseline medoid signatures (`@baseline_signatures`) and cluster radii (`@cluster_radii`) enabled immediate classification of additional telemetry without retraining the forest. `route_time_course()` revealed sub-threshold precursors leading into major events (@fig-routed-timeline), while `predict_stream()` triaged post-gap telemetry into normal operation, recurring baseline archetypes, and out-of-distribution events (@tbl-predict-stream). Branching a secondary engine onto the rejected events via `isolate_novel_anomalies()` showed that the post-gap novelties were four new emerging fault regimes (@tbl-novel-subclusters, @fig-novel-medoids-trajectories, @fig-novel-ablation).
 
 ## References {.unnumbered}
 

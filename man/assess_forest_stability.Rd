@@ -34,3 +34,16 @@ Conducts a grid search across tree counts and sample sizes to evaluate
 the Spearman rank correlation of anomaly scores against a massive baseline model.
 Useful for pre-flight hyperparameter tuning.
 }
+\examples{
+set.seed(42)
+df <- data.frame(x1 = rnorm(100), x2 = rnorm(100))
+res <- assess_forest_stability(
+  data = df,
+  target_features = c("x1", "x2"),
+  tree_counts = c(10, 25),
+  sample_sizes = c(32, 64),
+  baseline_trees = 100,
+  seed = 42
+)
+print(res)
+}

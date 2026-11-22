@@ -15,3 +15,14 @@ get_hyperparameters(object)
 \description{
 Returns the machine learning parameters parsed from the configuration.
 }
+\examples{
+cfg <- tempfile(fileext = ".yaml")
+yaml::write_yaml(list(
+  ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+  anomaly_threshold = 0.55, context_variables = list(),
+  target_variables = c("x1", "x2")
+), cfg)
+eng <- methods::new("DiagnosticEngine", config_path = cfg)
+get_hyperparameters(eng)
+unlink(cfg)
+}

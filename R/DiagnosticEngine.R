@@ -29,6 +29,15 @@
 #' @import methods
 #' @importFrom yaml read_yaml
 #' @rdname DiagnosticEngine-class
+#' @examples
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' unlink(cfg)
 #' @export
 setClass(
   "DiagnosticEngine",
@@ -77,24 +86,86 @@ setClass(
 #' @title Get Engine Hyperparameters
 #' @description Returns the machine learning parameters parsed from the configuration.
 #' @param object A DiagnosticEngine object.
+#' @examples
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' get_hyperparameters(eng)
+#' unlink(cfg)
 #' @export
 setGeneric("get_hyperparameters", function(object) standardGeneric("get_hyperparameters"))
 
 #' @title Get Feature Schema
 #' @description Returns the target and context variables defined for the engine.
 #' @param object A DiagnosticEngine object.
+#' @examples
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' get_features(eng)
+#' unlink(cfg)
 #' @export
 setGeneric("get_features", function(object) standardGeneric("get_features"))
 
 #' @title Get Forensic Ledger
 #' @description Extracts the ranked anomaly ledger as a flat data.frame.
 #' @param object A DiagnosticEngine object.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' eng <- commit_ledger(eng, k = 2)
+#' head(get_ledger(eng))
+#' unlink(cfg)
 #' @export
 setGeneric("get_ledger", function(object) standardGeneric("get_ledger"))
 
 #' @title Get Topological Medoids
 #' @description Extracts the unscaled physical anomaly archetypes as a combined data.frame.
 #' @param object A DiagnosticEngine object.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' eng <- commit_ledger(eng, k = 2)
+#' head(get_medoids(eng))
+#' unlink(cfg)
 #' @export
 setGeneric("get_medoids", function(object) standardGeneric("get_medoids"))
 
@@ -105,6 +176,22 @@ setGeneric("get_medoids", function(object) standardGeneric("get_medoids"))
 #' @param data A data.frame containing the raw time course.
 #' @param tolerance Numeric. Allowable variance in seconds between timestamps. If NULL, enforcement is skipped.
 #' @return An updated DiagnosticEngine object with the feature_matrix populated.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' unlink(cfg)
 #' @export
 setGeneric("ingest_time_course", function(object, data, tolerance = NULL) standardGeneric("ingest_time_course"))
 
@@ -113,6 +200,25 @@ setGeneric("ingest_time_course", function(object, data, tolerance = NULL) standa
 #' @param object A DiagnosticEngine object.
 #' @param threshold Numeric limit for empirical p-values (e.g., 0.60).
 #' @return An updated DiagnosticEngine object with the anomalies slot populated.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_anomalies(eng, threshold = 0.55)
+#' unlink(cfg)
 #' @export
 setGeneric("extract_anomalies", function(object, threshold) standardGeneric("extract_anomalies"))
 
@@ -120,6 +226,27 @@ setGeneric("extract_anomalies", function(object, threshold) standardGeneric("ext
 #' @description Calculates the N x N topological Hamming distance matrix of terminal nodes.
 #' @param object A DiagnosticEngine object.
 #' @return An updated DiagnosticEngine object with distance_matrix and hierarchical_tree populated.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_anomalies(eng, threshold = 0.55)
+#' head(get_scored_time_course(eng))
+#' eng <- compute_distances(eng)
+#' unlink(cfg)
 #' @export
 setGeneric("compute_distances", function(object) standardGeneric("compute_distances"))
 
@@ -129,6 +256,28 @@ setGeneric("compute_distances", function(object) standardGeneric("compute_distan
 #' @param min_k Integer. Minimum number of clusters to test. Default is 2.
 #' @param max_k Integer. Maximum number of clusters to test. Default is 8.
 #' @return An updated DiagnosticEngine object with k_metrics populated.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_anomalies(eng, threshold = 0.55)
+#' head(get_scored_time_course(eng))
+#' eng <- compute_distances(eng)
+#' eng <- calibrate(eng, min_k = 2, max_k = 4)
+#' unlink(cfg)
 #' @export
 setGeneric("calibrate", function(object, min_k = 2, max_k = 8) standardGeneric("calibrate"))
 
@@ -138,6 +287,25 @@ setGeneric("calibrate", function(object, min_k = 2, max_k = 8) standardGeneric("
 #' @param k Integer. The number of archetypal clusters to extract.
 #' @param threshold Numeric. Optional. The anomaly score threshold to define the statistical substrate.
 #' @param N Integer. Optional. The target number of anomalies to isolate.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' unlink(cfg)
 #' @export
 setGeneric("extract_medoids", function(object, threshold = NULL, N = NULL, k = NULL) {
   standardGeneric("extract_medoids")
@@ -148,6 +316,26 @@ setGeneric("extract_medoids", function(object, threshold = NULL, N = NULL, k = N
 #' @param object A DiagnosticEngine object.
 #' @param k Integer. Optional. The finalized number of distinct states. Defaults to optimal_k.
 #' @return An updated DiagnosticEngine object ready for historical export.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' eng <- commit_ledger(eng, k = 2)
+#' unlink(cfg)
 #' @export
 setGeneric("commit_ledger", function(object, k = NULL) standardGeneric("commit_ledger"))
 
@@ -157,12 +345,60 @@ setGeneric("commit_ledger", function(object, k = NULL) standardGeneric("commit_l
 #' @param object A DiagnosticEngine object (must be fully calibrated with medoids extracted).
 #' @param new_data A data.frame of new observations.
 #' @return A data.frame containing the anomaly scores, assigned clusters, and proximity metrics.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.50, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' eng <- commit_ledger(eng, k = 2)
+#'
+#' # New stream with a novel anomaly mode along x2
+#' new_df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-06 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 30),
+#'   x1 = rnorm(30), x2 = rnorm(30)
+#' )
+#' new_df$x2[20:28] <- new_df$x2[20:28] + 10
+#'
+#' routed <- predict_stream(eng, new_df)
+#' table(routed$predicted_state)
+#' unlink(cfg)
 #' @export
 setGeneric("predict_stream", function(object, new_data) standardGeneric("predict_stream"))
 
 #' @title Get Ingested Time Course
 #' @description Returns the schema-validated raw time course data.
 #' @param object A DiagnosticEngine object.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' head(get_time_course(eng))
+#' unlink(cfg)
 #' @export
 setGeneric("get_time_course", function(object) standardGeneric("get_time_course"))
 
@@ -173,6 +409,25 @@ setGeneric("get_time_course", function(object) standardGeneric("get_time_course"
 #' @param thresholds Numeric vector of thresholds to test.
 #' @param ntrees Integer. Overrides YAML if provided.
 #' @param sample_size Integer. Overrides YAML if provided.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' explore_thresholds(eng, thresholds = c(0.50, 0.55, 0.60))
+#' unlink(cfg)
 #' @export
 setGeneric("explore_thresholds", function(object, thresholds = seq(0.50, 0.80, by = 0.01), ntrees = NULL, sample_size = NULL) standardGeneric("explore_thresholds"))
 
@@ -192,6 +447,26 @@ setGeneric("explore_thresholds", function(object, thresholds = seq(0.50, 0.80, b
 #'
 #' @return A \code{data.frame} containing the stability profile with columns: \code{Threshold}, 
 #' \code{N_Anomalies}, \code{Opt_k}, \code{Max_Silhouette}, and \code{Hartigans_D}.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' evaluate_k_stability(eng, max_N = 20, min_N = 10, nb_steps = 3, min_k = 2, max_k = 4)
+#' unlink(cfg)
+
 #' @export
 setGeneric("evaluate_k_stability", function(object, max_N, min_N, nb_steps = 50, min_k = 2, max_k = 10) {
   standardGeneric("evaluate_k_stability")
@@ -207,6 +482,26 @@ setGeneric("evaluate_k_stability", function(object, max_N, min_N, nb_steps = 50,
 #' @param n Integer. The target number of top anomalies to isolate.
 #'
 #' @return Numeric. The anomaly score threshold corresponding to the target sample size.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' get_threshold_at_N(eng, n = 12)
+#' unlink(cfg)
+
 #' @export
 setGeneric("get_threshold_at_N", function(object, n) {
   standardGeneric("get_threshold_at_N")
@@ -219,12 +514,54 @@ setGeneric("get_threshold_at_N", function(object, n) {
 #' it measures the corresponding drop in anomaly score to rank feature importance.
 #' @param object A DiagnosticEngine object (must have extracted medoids).
 #' @return A data.frame containing the ranked feature contributions for each archetype.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' eng <- commit_ledger(eng, k = 2)
+#' ablate_features(eng)
+#' unlink(cfg)
+
 #' @export
 setGeneric("ablate_features", function(object) standardGeneric("ablate_features"))
 
 #' @title Get Scored Time Course
 #' @description Returns the complete time course containing all anomaly scores, regardless of threshold.
 #' @param object A DiagnosticEngine object.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_anomalies(eng, threshold = 0.55)
+#' head(get_scored_time_course(eng))
+#' unlink(cfg)
 #' @export
 setGeneric("get_scored_time_course", function(object) standardGeneric("get_scored_time_course"))
 
@@ -234,6 +571,27 @@ setGeneric("get_scored_time_course", function(object) standardGeneric("get_score
 #' @param object A DiagnosticEngine object with extracted medoids and cluster radii.
 #' @return A data.frame containing the scored time course along with `closest_archetype`, 
 #' `distance_to_archetype`, and `archetype_bucket`.
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.55, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' eng <- commit_ledger(eng, k = 2)
+#' head(route_time_course(eng))
+#' unlink(cfg)
 #' @export
 setGeneric("route_time_course", function(object) standardGeneric("route_time_course"))
 
@@ -250,6 +608,40 @@ setGeneric("route_time_course", function(object) standardGeneric("route_time_cou
 #' @param k Integer. Optional override for the number of novel sub-clusters. Defaults to optimal_k.
 #' @return A populated `DiagnosticEngine` object representing the novel anomaly sub-clusters.
 #' @rdname isolate_novel_anomalies
+#' @examples
+#' set.seed(42)
+#' df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-01 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 100),
+#'   x1 = rnorm(100), x2 = rnorm(100)
+#' )
+#' df$x1[85:92] <- df$x1[85:92] + 8
+#' df$x1[93:100] <- df$x1[93:100] - 8
+#' cfg <- tempfile(fileext = ".yaml")
+#' yaml::write_yaml(list(
+#'   ntrees = 20, sample_size = 32, temporal_window_hours = 2,
+#'   anomaly_threshold = 0.50, context_variables = list(),
+#'   target_variables = c("x1", "x2")
+#' ), cfg)
+#' eng <- methods::new("DiagnosticEngine", config_path = cfg)
+#' eng <- ingest_time_course(eng, df)
+#' eng <- extract_medoids(eng, N = 14, k = 2)
+#' eng <- commit_ledger(eng, k = 2)
+#'
+#' # New stream with a novel anomaly mode along x2
+#' new_df <- data.frame(
+#'   timestamp = seq.POSIXt(as.POSIXct("2025-01-06 00:00:00", tz = "UTC"),
+#'                          by = "hour", length.out = 30),
+#'   x1 = rnorm(30), x2 = rnorm(30)
+#' )
+#' new_df$x2[20:28] <- new_df$x2[20:28] + 10
+#'
+#' routed <- predict_stream(eng, new_df)
+#' if (sum(routed$predicted_state == "Novel Anomaly") >= 3) {
+#'   novel_eng <- isolate_novel_anomalies(eng, routed, min_k = 2, max_k = 3, k = 2)
+#'   head(get_ledger(novel_eng))
+#' }
+#' unlink(cfg)
 #' @export
 setGeneric("isolate_novel_anomalies", function(object, routed_data, min_k = 2, max_k = 6, k = NULL) {
   standardGeneric("isolate_novel_anomalies")
