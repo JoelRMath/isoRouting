@@ -53,7 +53,7 @@ yaml::write_yaml(list(
 ), cfg)
 
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a3452b1006f.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file1a4f52b21642.yaml
 eng <- ingest_time_course(eng, df)
 #> Time course ingested successfully. Data locked at 100 rows by 3 schema variables.
 lid_ctrl <- simulate_lid_control(eng, N = c(10, 20), iterations = 10, k = 5)

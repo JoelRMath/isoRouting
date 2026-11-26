@@ -29,7 +29,7 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Get Scored Time Course</h1>
-      <small class="dont-index">Source: <a href="https://github.com/joelRMath/isoRouting/blob/main/R/DiagnosticEngine.R" class="external-link"><code>R/DiagnosticEngine.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/joelRMath/isoRouting/blob/v0.1.0/R/DiagnosticEngine.R" class="external-link"><code>R/DiagnosticEngine.R</code></a></small>
       <div class="d-none name"><code>get_scored_time_course.Rd</code></div>
     </div>
 
@@ -71,7 +71,7 @@
 <span class="r-in"><span>  target_variables <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"x1"</span>, <span class="st">"x2"</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="op">)</span>, <span class="va">cfg</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="va">eng</span> <span class="op">&lt;-</span> <span class="fu">methods</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/r/methods/new.html" class="external-link">new</a></span><span class="op">(</span><span class="st">"DiagnosticEngine"</span>, config_path <span class="op">=</span> <span class="va">cfg</span><span class="op">)</span></span></span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> DiagnosticEngine initialized. Schema loaded from: file1a343afa012a.yaml</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> DiagnosticEngine initialized. Schema loaded from: file1a4f48a72c86.yaml</span>
 <span class="r-in"><span><span class="va">eng</span> <span class="op">&lt;-</span> <span class="fu"><a href="ingest_time_course.html">ingest_time_course</a></span><span class="op">(</span><span class="va">eng</span>, <span class="va">df</span><span class="op">)</span></span></span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> Time course ingested successfully. Data locked at 100 rows by 3 schema variables.</span>
 <span class="r-in"><span><span class="va">eng</span> <span class="op">&lt;-</span> <span class="fu"><a href="extract_anomalies.html">extract_anomalies</a></span><span class="op">(</span><span class="va">eng</span>, threshold <span class="op">=</span> <span class="fl">0.55</span><span class="op">)</span></span></span>

@@ -115,6 +115,6 @@ yaml::write_yaml(list(
   target_variables = c("x1", "x2")
 ), cfg)
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a3412f3edfa.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file1a4f8eb043f.yaml
 unlink(cfg)
 ```

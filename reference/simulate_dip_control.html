@@ -29,7 +29,7 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Simulate Control Quantiles for Hartigan's Dip Statistic</h1>
-      <small class="dont-index">Source: <a href="https://github.com/joelRMath/isoRouting/blob/main/R/diagnostic_helpers.R" class="external-link"><code>R/diagnostic_helpers.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/joelRMath/isoRouting/blob/v0.1.0/R/diagnostic_helpers.R" class="external-link"><code>R/diagnostic_helpers.R</code></a></small>
       <div class="d-none name"><code>simulate_dip_control.Rd</code></div>
     </div>
 
@@ -83,7 +83,7 @@
 <span class="r-in"><span><span class="op">)</span>, <span class="va">cfg</span><span class="op">)</span></span></span>
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="va">eng</span> <span class="op">&lt;-</span> <span class="fu">methods</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/r/methods/new.html" class="external-link">new</a></span><span class="op">(</span><span class="st">"DiagnosticEngine"</span>, config_path <span class="op">=</span> <span class="va">cfg</span><span class="op">)</span></span></span>
-<span class="r-msg co"><span class="r-pr">#&gt;</span> DiagnosticEngine initialized. Schema loaded from: file1a34546f7dda.yaml</span>
+<span class="r-msg co"><span class="r-pr">#&gt;</span> DiagnosticEngine initialized. Schema loaded from: file1a4f203c346f.yaml</span>
 <span class="r-in"><span><span class="va">eng</span> <span class="op">&lt;-</span> <span class="fu"><a href="ingest_time_course.html">ingest_time_course</a></span><span class="op">(</span><span class="va">eng</span>, <span class="va">df</span><span class="op">)</span></span></span>
 <span class="r-msg co"><span class="r-pr">#&gt;</span> Time course ingested successfully. Data locked at 100 rows by 3 schema variables.</span>
 <span class="r-in"><span><span class="va">dip_ctrl</span> <span class="op">&lt;-</span> <span class="fu">simulate_dip_control</span><span class="op">(</span><span class="va">eng</span>, N <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">10</span>, <span class="fl">20</span><span class="op">)</span>, iterations <span class="op">=</span> <span class="fl">10</span><span class="op">)</span></span></span>

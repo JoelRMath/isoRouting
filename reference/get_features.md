@@ -27,7 +27,7 @@ yaml::write_yaml(list(
   target_variables = c("x1", "x2")
 ), cfg)
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a34348d6161.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file1a4f4bf51266.yaml
 get_features(eng)
 #> $target_variables
 #> [1] "x1" "x2"
