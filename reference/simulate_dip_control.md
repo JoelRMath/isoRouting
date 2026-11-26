@@ -49,7 +49,7 @@ yaml::write_yaml(list(
 ), cfg)
 
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a4f203c346f.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file1a7375c8376e.yaml
 eng <- ingest_time_course(eng, df)
 #> Time course ingested successfully. Data locked at 100 rows by 3 schema variables.
 dip_ctrl <- simulate_dip_control(eng, N = c(10, 20), iterations = 10)

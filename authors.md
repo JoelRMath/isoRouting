@@ -7,7 +7,7 @@
 ## Citation
 
 Source:
-[`DESCRIPTION`](https://github.com/joelRMath/isoRouting/blob/v0.1.0/DESCRIPTION)
+[`DESCRIPTION`](https://github.com/joelRMath/isoRouting/blob/main/DESCRIPTION)
 
 Pradines J (2026). *isoRouting: Diagnostic Engine for Multivariate Time
 Series*. R package version 0.1.0,

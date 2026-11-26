@@ -27,7 +27,7 @@ yaml::write_yaml(list(
   target_variables = c("x1", "x2")
 ), cfg)
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a4f1923a15b.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file1a73322514b.yaml
 get_hyperparameters(eng)
 #> $anomaly_threshold
 #> [1] 0.55
