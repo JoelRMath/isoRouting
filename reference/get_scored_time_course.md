@@ -36,7 +36,7 @@ yaml::write_yaml(list(
   target_variables = c("x1", "x2")
 ), cfg)
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a73658a929d.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file19e94d36d930.yaml
 eng <- ingest_time_course(eng, df)
 #> Time course ingested successfully. Data locked at 100 rows by 3 schema variables.
 eng <- extract_anomalies(eng, threshold = 0.55)

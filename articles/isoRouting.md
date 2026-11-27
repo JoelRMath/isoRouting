@@ -178,18 +178,21 @@ anomaly detector and the similarity engine—extracting terminal leaf
 memberships directly from the trees to keep every stage of exploration,
 clustering, and live routing fast:
 
-- **Fast Scoring & Feature Auditing:** Because each tree in an Isolation
-  Forest (`isotree`) is grown on a small, fixed random subsample of
+- **Fast Scoring & Feature Auditing (`extract_anomalies`,
+  `ablate_features`):** Because each tree in an Isolation Forest
+  (`isotree`) is grown on a small, fixed random subsample of
   observations (`sample_size`, $`\psi = 256`$) rather than the full time
   series of length $`N`$, tree construction scales as
   $`\mathcal{O}(n_t \psi \log \psi)`$ (where $`n_t`$ is the number of
   trees) and scoring scales linearly as
   $`\mathcal{O}(N n_t \log \psi)`$. This allows users to rapidly audit
-  candidate feature sets via permutation or leave-one-out tail
-  attribution without computational bottlenecks.
+  candidate feature sets via permutation or medoid feature ablation
+  ([`ablate_features()`](https://joelrmath.github.io/isoRouting/reference/ablate_features.md))
+  without computational bottlenecks.
 - **Objective Threshold Calibration ($`D`$ and $`\text{LID}`$):** Rather
-  than guessing a score cutoff, users can sweep candidate thresholds to
-  rapidly generate diagnostic profiles for the resulting subset of
+  than guessing a score cutoff, users can sweep candidate thresholds
+  ([`evaluate_k_stability()`](https://joelrmath.github.io/isoRouting/reference/evaluate_k_stability.md))
+  to rapidly generate diagnostic profiles for the resulting subset of
   $`N_a`$ threshold-induced anomalies ($`N_a \ll N`$):
   - **Hartigan’s Dip Statistic ($`D`$)** ([Hartigan and Hartigan
     1985](#ref-hartigan1985dip)) tests pairwise tail distances for
@@ -205,7 +208,9 @@ clustering, and live routing fast:
   - Both measures are minimally sensitive to subset size $`N_a`$ (e.g.,
     $`D`$ is a scale-free effect size), and their computational speed
     makes it practical to benchmark observed values against Monte Carlo
-    null distributions.
+    null distributions
+    ([`simulate_dip_control()`](https://joelrmath.github.io/isoRouting/reference/simulate_dip_control.md),
+    [`simulate_lid_control()`](https://joelrmath.github.io/isoRouting/reference/simulate_lid_control.md)).
 - **Scale-Free Clustering & Fault Archetypes (`compute_distances`):**
   Instead of comparing raw sensors with incompatible units, `isoRouting`
   extracts the $`N_a \times n_t`$ matrix of terminal leaf IDs from the
@@ -216,32 +221,33 @@ clustering, and live routing fast:
   splits broad anomalies into specific fault regimes and summarizes each
   cluster by its **medoid**—an actual historical observation that serves
   as the cluster’s representative **archetype**.
-- **Fast Streaming Triage & Novelty Detection (`stream_telemetry`):**
-  Incoming anomalies ($`N_{\text{new}}`$) are routed by comparing their
-  leaf memberships solely against the $`k`$ cluster medoids in
-  $`\mathcal{O}(N_{\text{new}} k n_t)`$ time. Points falling within a
-  cluster’s calibrated radius are labeled with that known archetype;
-  points outside all $`k`$ radii are flagged as **novel anomalies** for
-  further inspection and can be sub-clustered into emerging archetypes
-  when warranted.
+- **Fast Streaming Triage & Novelty Detection (`predict_stream`):**
+  Incoming observations ($`N_{\text{new}}`$) are scored and routed by
+  comparing their leaf memberships solely against the $`k`$ cluster
+  medoids in $`\mathcal{O}(N_{\text{new}} n_t (\log \psi + k))`$ time.
+  Points falling within a cluster’s calibrated radius are labeled with
+  that known archetype; points outside all $`k`$ radii are flagged as
+  **novel anomalies** for further inspection and can be sub-clustered
+  into emerging archetypes when warranted.
 
 [Table 1](#tbl-complexity) summarizes the asymptotic time complexity
 across each stage of the `isoRouting` pipeline.
 
-| Pipeline Stage | S4 Method / Engine Step | Time Complexity |
+| Pipeline Stage | S4 Method / Helper | Time Complexity |
 |:---|:---|:---|
-| **Forest Fit & Scoring** | [`ingest_time_course()`](https://joelrmath.github.io/isoRouting/reference/ingest_time_course.md) / `isotree` | $`\mathcal{O}(n_t \psi \log \psi + N n_t \log \psi)`$ |
-| **Feature Ranking (LOO)** | Leave-one-out tail attribution | $`\mathcal{O}(p \cdot N n_t \log \psi)`$ |
-| **Threshold Controls ($`D`$, $`\text{LID}`$)** | [`simulate_dip_control()`](https://joelrmath.github.io/isoRouting/reference/simulate_dip_control.md), [`simulate_lid_control()`](https://joelrmath.github.io/isoRouting/reference/simulate_lid_control.md) | $`\mathcal{O}(M \cdot N_a \log N_a)`$ |
-| **Leaf Hamming Distances** | [`compute_distances()`](https://joelrmath.github.io/isoRouting/reference/compute_distances.md) | $`\mathcal{O}(N_a^2 n_t)`$ |
-| **Divisive Clustering & Stability** | [`evaluate_k_stability()`](https://joelrmath.github.io/isoRouting/reference/evaluate_k_stability.md) (DIANA) | $`\mathcal{O}(B \cdot k N_a^2)`$ |
-| **Streaming Triage** | `stream_telemetry()` | $`\mathcal{O}(N_{\text{new}} n_t \log \psi + N_{\text{new}} k n_t)`$ |
+| **Forest Fit & Scoring** | [`extract_anomalies()`](https://joelrmath.github.io/isoRouting/reference/extract_anomalies.md) (`isotree`) | $`\mathcal{O}(n_t \psi \log \psi + N n_t \log \psi)`$ |
+| **Leaf Hamming & DIANA** | [`compute_distances()`](https://joelrmath.github.io/isoRouting/reference/compute_distances.md) | $`\mathcal{O}(N_a^2 n_t + N_a^3)`$ |
+| **Threshold Stability Sweep** | [`evaluate_k_stability()`](https://joelrmath.github.io/isoRouting/reference/evaluate_k_stability.md) | $`\mathcal{O}(N_{\max}^2 n_t + S(N_{\max}^3 + K N_{\max}^2))`$ |
+| **Threshold Controls ($`D`$, $`\text{LID}`$)** | [`simulate_dip_control()`](https://joelrmath.github.io/isoRouting/reference/simulate_dip_control.md), [`simulate_lid_control()`](https://joelrmath.github.io/isoRouting/reference/simulate_lid_control.md) | $`\mathcal{O}(M N_{\max}^2 (n_t + S \log N_{\max}))`$ |
+| **Medoid Feature Ablation** | [`ablate_features()`](https://joelrmath.github.io/isoRouting/reference/ablate_features.md) | $`\mathcal{O}(p N + p k n_t \log \psi)`$ |
+| **Streaming Triage** | [`predict_stream()`](https://joelrmath.github.io/isoRouting/reference/predict_stream.md) | $`\mathcal{O}(N_{\text{new}} n_t (\log \psi + k))`$ |
 
-Table 1: Computational complexity of the `isoRouting` workflow ($`N`$:
-series length; $`N_a \ll N`$: extracted tail anomalies; $`n_t`$: number
-of trees (`isotree`); $`\psi`$: subsample size (`isotree`); $`p`$:
-number of features; $`k`$: archetype clusters; $`M, B`$: Monte
-Carlo/bootstrap iterations; $`N_{\text{new}}`$: streaming points).
+Table 1: Asymptotic time complexity across the `isoRouting` pipeline
+($`N`$: series length; $`N_a, N_{\max} \ll N`$: extracted tail
+anomalies; $`n_t`$: number of trees; $`\psi`$: subsample size; $`p`$:
+target features; $`k`$: selected archetypes; $`K`$: candidate cluster
+counts tested; $`S`$: threshold/sample-size sweep steps; $`M`$: Monte
+Carlo iterations; $`N_{\text{new}}`$: streaming observations).
 
 ## 2 Engine Workflow
 

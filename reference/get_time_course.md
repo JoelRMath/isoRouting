@@ -33,7 +33,7 @@ yaml::write_yaml(list(
   target_variables = c("x1", "x2")
 ), cfg)
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a73244013b8.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file19e939ec2456.yaml
 eng <- ingest_time_course(eng, df)
 #> Time course ingested successfully. Data locked at 100 rows by 3 schema variables.
 head(get_time_course(eng))

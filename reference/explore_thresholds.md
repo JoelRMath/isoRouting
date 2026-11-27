@@ -58,7 +58,7 @@ yaml::write_yaml(list(
   target_variables = c("x1", "x2")
 ), cfg)
 eng <- methods::new("DiagnosticEngine", config_path = cfg)
-#> DiagnosticEngine initialized. Schema loaded from: file1a7351c925ba.yaml
+#> DiagnosticEngine initialized. Schema loaded from: file19e92c561558.yaml
 eng <- ingest_time_course(eng, df)
 #> Time course ingested successfully. Data locked at 100 rows by 3 schema variables.
 explore_thresholds(eng, thresholds = c(0.50, 0.55, 0.60))
